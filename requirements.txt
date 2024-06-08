@@ -1,0 +1,15 @@
+boto3
+requests
+redis
+uuid
+ffmpeg-python
+torch
+openai-whisper
+pandas
+dlib
+face_recognition
+numpy
+scipy
+opencv-python
+cmake
+transformers
