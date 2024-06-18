@@ -118,4 +118,4 @@ if __name__ == '__main__':
             logging.error(f"Error in main loop: {e}")
             traceback.print_exc()
         logging.info(f"Message Count: {no_message_count}")
-        time.sleep(60)  # Wait for 20 seconds before polling again
+        time.sleep(20)  # Wait for 20 seconds before polling again
