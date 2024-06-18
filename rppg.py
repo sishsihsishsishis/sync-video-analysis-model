@@ -5,13 +5,14 @@ import math
 import torch
 import numpy as np
 import pandas as pd
+import logging
 from scipy import linalg
 from scipy import signal
 from scipy import sparse
 import face_recognition
 import time
-
-from SingleModelRPPG.repository.RPPG.emonet import EmoNet
+import traceback
+from models.rppg.emonet import EmoNet
 
 print(os.path.dirname(os.path.abspath(__file__)))
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -20,7 +21,7 @@ n_expression = 8
 net = EmoNet(n_expression=n_expression).to(device)
 state_dict_path = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
-    f"../repository/RPPG/emonet_{n_expression}.pth",
+    f"models/rppg/emonet_{n_expression}.pth",
 )
 state_dict = torch.load(str(state_dict_path), map_location=torch.device(device))
 state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
@@ -30,7 +31,7 @@ net.eval()
 
 def face_distance(face_encodings, face_to_compare):
     """
-    Given a list of face encodings, compare them to a known face encoding and get a euclidean distance
+    Given a list of face encodings, compare them to a known face encoding and get a Euclidean distance
     for each comparison face. The distance tells you how similar the faces are.
 
     :param faces: List of face encodings to compare
@@ -45,11 +46,12 @@ def face_distance(face_encodings, face_to_compare):
 
 def compare_faces(know_encoding, face_encoding, t):
     """
+    Compare face encodings with a known encoding list.
 
-    :param know_encoding: 用户encoding列表
-    :param face_encoding: 待匹配人脸的encoding
-    :param t: 阈值
-    :return: -1表示未匹配，其他数值表示匹配到的最相近的用户索引
+    :param know_encoding: List of known encodings
+    :param face_encoding: Encoding of the face to compare
+    :param t: Threshold
+    :return: -1 if not matched, otherwise the index of the most similar user
     """
     distance = face_distance(know_encoding, face_encoding)
     if any(distance <= t):
@@ -60,7 +62,7 @@ def compare_faces(know_encoding, face_encoding, t):
 
 def if_intersect(box1, box2):
     """
-    检查两个矩形框是否相交。
+    Check if two rectangles intersect.
     (top, right, bottom, left)
     """
     if box1[3] > box2[1] or box2[3] > box1[1] or box1[0] > box2[2] or box2[0] > box1[2]:
@@ -88,17 +90,18 @@ def new_compare_faces(know_encoding, u_poses, face_encoding, cur_loc, t):
 
 def calculate_rppg(face_coor, frames, fps):
     """
+    Calculate rppg for the given face coordinates and frames.
 
-    :param face_coor: 人脸位置坐标
-    :param frames: 一秒钟的视频帧
-    :param fps: 采样率
-    :return: 计算的rppg列表
+    :param face_coor: Face coordinates
+    :param frames: Frames in one second of video
+    :param fps: Frame rate
+    :return: Calculated rppg list
     """
     top, right, bottom, left = face_coor
     face_frame_resized = []
     for frame in frames:
         face_frame = frame[top:bottom, left:right]
-        frame_resized = cv2.resize(face_frame, (72, 72))  # type: ignore
+        frame_resized = cv2.resize(face_frame, (72, 72))
         face_frame_resized.append(frame_resized)
 
     face_frame_resized = np.array(face_frame_resized)
@@ -114,24 +117,25 @@ def calculate_rppg(face_coor, frames, fps):
 
 def calculate_emotion(face_coor, frame, username=None, res_dir=None, res_mapping=None):
     """
+    Calculate emotion for the given face coordinates and frame.
 
-    :param face_coor: 人脸位置坐标
-    :param frame: 中间帧
-    :param username:
-    :param save:
-    :param vedio_name:
-    :return: emotion分析结果
+    :param face_coor: Face coordinates
+    :param frame: Middle frame
+    :param username: Username
+    :param res_dir: Result directory
+    :param res_mapping: Result mapping
+    :return: Emotion analysis result
     """
     top, right, bottom, left = face_coor
 
     face_frame = frame[top:bottom, left:right]
-    frame_resized = cv2.resize(face_frame, (256, 256))  # type: ignore
+    frame_resized = cv2.resize(face_frame, (256, 256))
 
     if username:
         save_frame = frame_resized[:, :, ::-1]
-        res_path = os.path.join(res_dir, "{}.jpg".format(username))  # type: ignore
-        res_mapping["{}.jpg".format(username)] = res_path  # type: ignore
-        cv2.imwrite(res_path, save_frame)  # type: ignore
+        res_path = os.path.join(res_dir, "{}.jpg".format(username))
+        res_mapping["{}.jpg".format(username)] = res_path
+        cv2.imwrite(res_path, save_frame)
 
     frame_resized = np.transpose(frame_resized, (2, 0, 1)) / 255.0
 
@@ -154,12 +158,12 @@ def jade(X, m, Wprev):
         k = np.argsort(Diag)
         pu = Diag[k]
         ibl = np.sqrt(pu[n - m : n] - np.mean(pu[0 : n - m]))
-        bl = np.true_divide(np.ones(m, 1), ibl)  # type: ignore
+        bl = np.true_divide(np.ones(m, 1), ibl)
         W = np.matmul(np.diag(bl), np.transpose(U[0:n, k[n - m : n]]))
         IW = np.matmul(U[0:n, k[n - m : n]], np.diag(ibl))
     else:
         IW = linalg.sqrtm(np.matmul(X, X.H) / T)
-        W = np.linalg.inv(IW)  # type: ignore
+        W = np.linalg.inv(IW)
 
     Y = np.mat(np.matmul(W, X))
     R = np.matmul(Y, Y.H) / T
@@ -235,7 +239,7 @@ def jade(X, m, Wprev):
 
     # Whiten the Matrix
     # Estimation of the Mixing Matrix and Signal Separation
-    A = np.matmul(IW, V)  # type: ignore
+    A = np.matmul(IW, V)
     S = np.matmul(np.mat(V).H, Y)
     return A, S
 
@@ -400,7 +404,7 @@ def remove_user_anchor(user, anchor_locs):
 
 
 def convert_face_location_2_xyxy(anchor_locations: dict):
-    # 将face_recognition库的人脸框转换为x1, y1, x2, y2的形式
+    # Convert face_recognition face locations to x1, y1, x2, y2 format
     xyxy_locations = []
     for anchor_location in anchor_locations:
         if isinstance(anchor_location, str):
@@ -419,287 +423,286 @@ def convert_face_location_2_xyxy(anchor_locations: dict):
 
 
 def go_rppg(video_path, res_dir, compare_thresh=0.7):
-    """
-    :param video_path: video file path
-    :param rppg_savepath:  rppg results save path, .csv
-    :param v_savepath:  valence results save path, .csv
-    :param a_savepath:  arousal results save path, .csv
-    :return: None
-    """
-    rppg_savepath = os.path.join(res_dir, "rppg_results.csv")
-    anchor_savepath = os.path.join(res_dir, "anchor_results.csv")
-    v_savepath = os.path.join(res_dir, "v_results.csv")
-    a_savepath = os.path.join(res_dir, "a_results.csv")
-    res_mapping = {
-        "rppg_results.csv": rppg_savepath,
-        "v_results.csv": v_savepath,
-        "a_results.csv": a_savepath,
-        "anchor_results.csv": anchor_savepath,
-    }
-    # 用户列表
-    user_list = []
-    # 用户编码
-    user_encodings = []
-    user_init_locations = []
-    # know_encoding = []
-    user_positions = []
+    try:
+        """
+        :param video_path: video file path
+        :param rppg_savepath:  rppg results save path, .csv
+        :param v_savepath:  valence results save path, .csv
+        :param a_savepath:  arousal results save path, .csv
+        :return: None
+        """
+        rppg_savepath = os.path.join(res_dir, "rppg_results.csv")
+        anchor_savepath = os.path.join(res_dir, "anchor_results.csv")
+        v_savepath = os.path.join(res_dir, "v_results.csv")
+        a_savepath = os.path.join(res_dir, "a_results.csv")
+        res_mapping = {
+            "rppg_results.csv": rppg_savepath,
+            "v_results.csv": v_savepath,
+            "a_results.csv": a_savepath,
+            "anchor_results.csv": anchor_savepath,
+        }
+        # User list
+        user_list = []
+        # User encodings
+        user_encodings = []
+        user_init_locations = []
+        # know_encoding = []
+        user_positions = []
 
-    # analysis results
-    rppg_list = []
-    valence_list = []
-    arousal_list = []
+        # Analysis results
+        rppg_list = []
+        valence_list = []
+        arousal_list = []
 
-    # timestamp
-    rppg_timestamp = []
-    emotion_timestamp = []
+        # Timestamp
+        rppg_timestamp = []
+        emotion_timestamp = []
 
-    ### 增加参数
-    anchor_locations = []
-    anchor_timestamps = []
-    dict_location = {}
+        ### Additional parameters
+        anchor_locations = []
+        anchor_timestamps = []
+        dict_location = {}
 
-    videoCapture = cv2.VideoCapture(video_path)  # type: ignore
-    fps = videoCapture.get(cv2.CAP_PROP_FPS)  # type: ignore
+        videoCapture = cv2.VideoCapture(video_path)
+        fps = videoCapture.get(cv2.CAP_PROP_FPS)
 
-    ts = int(1 * fps)
-    videoCapture.set(cv2.CAP_PROP_POS_FRAMES, int(fps) * 3)  # type: ignore
-
-    success, frame = videoCapture.read()
-
-    # 存放一秒的视频帧
-    frames_by_second = []
-
-    frames_num = 0
-    seconds = 1
-    total = 0
-    time_cos = [0, 0, 0, 0]
-    while True:
-
-        frame = frame[:, :, ::-1]
-        frame = np.asarray(frame)
-        frames_by_second.append(frame)
+        ts = int(1 * fps)
+        videoCapture.set(cv2.CAP_PROP_POS_FRAMES, int(fps) * 3)
 
         success, frame = videoCapture.read()
-        if not success:
-            break
-        total += 1
 
-        rppg_timestamp.append(int(total * 1 / fps * 1000))  # add time stamp
+        # Store one second of video frames
+        frames_by_second = []
 
-        frames_num += 1
+        frames_num = 0
+        seconds = 1
+        total = 0
+        time_cos = [0, 0, 0, 0]
+        while True:
+            # logging.info(f"Working on frame {frames_num}")
+            frame = frame[:, :, ::-1]
+            frame = np.asarray(frame)
+            frames_by_second.append(frame)
+            success, frame = videoCapture.read()
+            if not success:
+                break
+            total += 1
 
-        # 帧数达到一秒时进行rppg和emotion分析
-        if (frames_num % ts == 0) & (frames_num > 0):
+            rppg_timestamp.append(int(total * 1 / fps * 1000))  # Add timestamp
 
-            temp_dict_location = {}
-            frames = np.asarray(frames_by_second)
-            # 取中间帧进行人脸检测
-            frame_selected = frames[int(ts) // 2]
-            _start = time.time()
-            face_locations = face_recognition.face_locations(frame_selected)
-            time_cos[0] += time.time() - _start  # type: ignore
-            # 计算平均人脸大小
+            frames_num += 1
 
-            # 对检测出的人脸进行筛选
-            if len(user_init_locations) > 0:
-                face_locations = filter_locations(face_locations, user_init_locations)
+            # When the number of frames reaches one second, perform rppg and emotion analysis
+            if (frames_num % ts == 0) & (frames_num > 0):
+                temp_dict_location = {}
+                frames = np.asarray(frames_by_second)
+                # Use the middle frame for face detection
+                frame_selected = frames[int(ts) // 2]
+                _start = time.time()
+                face_locations = face_recognition.face_locations(frame_selected)
+                time_cos[0] += time.time() - _start
+                # Calculate average face size
 
-            _start = time.time()
-            # 对检测出的人脸进行encoding
-            face_encodings = face_recognition.face_encodings(
-                frame_selected, face_locations
-            )
-            time_cos[1] += time.time() - _start  # type: ignore
+                # Filter detected faces
+                if len(user_init_locations) > 0:
+                    face_locations = filter_locations(face_locations, user_init_locations)
 
-            # 第一次检测出人脸
-            if len(user_encodings) == 0:  # init
-                user_encodings = list(face_encodings)
-                user_positions = list(face_locations)
-                # 向前补齐
-                user_list = [f"user_{i}" for i in range(len(user_encodings))]
+                _start = time.time()
+                # Encode detected faces
+                face_encodings = face_recognition.face_encodings(
+                    frame_selected, face_locations
+                )
+                time_cos[1] += time.time() - _start
 
-                # for i in range(len(user_list)):
-                #     dict_location[user_list] = user_positions[i]
+                # First time faces are detected
+                if len(user_encodings) == 0:  # Init
+                    user_encodings = list(face_encodings)
+                    user_positions = list(face_locations)
+                    # Fill forward
+                    user_list = [f"user_{i}" for i in range(len(user_encodings))]
 
-                rppg_list = [
-                    [0] * int((frames_num - ts)) for _ in range(len(user_encodings))
-                ]
-                valence_list = [
-                    [0] * int((seconds - 1)) for _ in range(len(user_encodings))
-                ]
-                arousal_list = [
-                    [0] * int((seconds - 1)) for _ in range(len(user_encodings))
-                ]
+                    rppg_list = [
+                        [0] * int((frames_num - ts)) for _ in range(len(user_encodings))
+                    ]
+                    valence_list = [
+                        [0] * int((seconds - 1)) for _ in range(len(user_encodings))
+                    ]
+                    arousal_list = [
+                        [0] * int((seconds - 1)) for _ in range(len(user_encodings))
+                    ]
 
-                # 计算rppg和emotion
-                for idx, face_location in enumerate(face_locations):
-                    face = face_locations[idx]
+                    # Calculate rppg and emotion
+                    for idx, face_location in enumerate(face_locations):
+                        face = face_locations[idx]
 
-                    ### 更新字典temp_dict_location
-                    temp_dict_location[user_list[idx]] = face_location
-                    _start = time.time()
-                    rppg = calculate_rppg(face, frames, fps)
-                    time_cos[2] += time.time() - _start  # type: ignore
-                    _start = time.time()
-                    valence, arousal = calculate_emotion(
-                        face, frame_selected, user_list[idx], res_dir, res_mapping
-                    )
-                    time_cos[3] += time.time() - _start  # type: ignore
-                    rppg_list[idx] = rppg_list[idx] + rppg
-                    arousal_list[idx].append(arousal)
-                    valence_list[idx].append(valence)
-
-            else:
-
-                users_num = np.arange(len(user_list))
-
-                # 当前帧检测到的用户
-                detected_users = []
-
-                for idx, face_encoding in enumerate(face_encodings):
-                    face = face_locations[idx]
-
-                    match = new_compare_faces(
-                        user_encodings,
-                        user_positions,
-                        face_encoding,
-                        face_locations[idx],
-                        compare_thresh,
-                    )
-
-                    # 和之前的用户未匹配上认为是新用户
-                    if match == -1:  # new user
-                        user_encodings.append(face_encoding)
-                        user_positions.append(face_locations[idx])
-
-                        user_list.append(f"user_{len(user_list)}")
-
-                        ### 更新字典temp_dict_location
-                        temp_dict_location[f"user_{len(user_list) - 1}"] = (
-                            face_locations[idx]
-                        )
-
-                        try:
-                            _start = time.time()
-                            rppg = calculate_rppg(face, frames, fps)
-                            time_cos[2] += time.time() - _start  # type: ignore
-                        except Exception as e:
-                            # 向前补齐
-                            rppg = [0] * int(fps)
+                        ### Update temp_dict_location
+                        temp_dict_location[user_list[idx]] = face_location
+                        _start = time.time()
+                        rppg = calculate_rppg(face, frames, fps)
+                        time_cos[2] += time.time() - _start
                         _start = time.time()
                         valence, arousal = calculate_emotion(
-                            face, frame_selected, user_list[-1], res_dir, res_mapping
+                            face, frame_selected, user_list[idx], res_dir, res_mapping
                         )
-                        time_cos[3] += time.time() - _start  # type: ignore
-                        rppg_list.append([0] * int((frames_num - ts)) + rppg)
-                        alist = [0] * int((seconds - 1))
-                        vlist = [0] * int((seconds - 1))
-                        alist.append(arousal)
-                        vlist.append(valence)
-                        arousal_list.append(alist)
-                        valence_list.append(vlist)
-                        detected_users.append(len(rppg_list) - 1)
+                        time_cos[3] += time.time() - _start
+                        rppg_list[idx] = rppg_list[idx] + rppg
+                        arousal_list[idx].append(arousal)
+                        valence_list[idx].append(valence)
 
-                    elif match is None:
-                        continue
+                else:
+                    users_num = np.arange(len(user_list))
 
-                    else:  # old user
-                        # 当前时间之前检测用户在该秒被检测到
-                        if match not in detected_users:
+                    # Users detected in the current frame
+                    detected_users = []
 
-                            ### 更新字典temp_dict_location
-                            temp_dict_location[f"user_{match}"] = face_locations[idx]
+                    for idx, face_encoding in enumerate(face_encodings):
+                        face = face_locations[idx]
+
+                        match = new_compare_faces(
+                            user_encodings,
+                            user_positions,
+                            face_encoding,
+                            face_locations[idx],
+                            compare_thresh,
+                        )
+
+                        # If no match, consider as a new user
+                        if match == -1:  # New user
+                            user_encodings.append(face_encoding)
+                            user_positions.append(face_locations[idx])
+
+                            user_list.append(f"user_{len(user_list)}")
+
+                            ### Update temp_dict_location
+                            temp_dict_location[f"user_{len(user_list) - 1}"] = (
+                                face_locations[idx]
+                            )
 
                             try:
                                 _start = time.time()
                                 rppg = calculate_rppg(face, frames, fps)
-                                time_cos[2] += time.time() - _start  # type: ignore
+                                time_cos[2] += time.time() - _start
                             except Exception as e:
+                                # Fill forward
                                 rppg = [0] * int(fps)
                             _start = time.time()
-                            valence, arousal = calculate_emotion(face, frame_selected)
-                            time_cos[3] += time.time() - _start  # type: ignore
-                            rppg_list[match] = rppg_list[match] + rppg
-                            arousal_list[match].append(arousal)
-                            valence_list[match].append(valence)
-                            detected_users.append(match)
+                            valence, arousal = calculate_emotion(
+                                face, frame_selected, user_list[-1], res_dir, res_mapping
+                            )
+                            time_cos[3] += time.time() - _start
+                            rppg_list.append([0] * int((frames_num - ts)) + rppg)
+                            alist = [0] * int((seconds - 1))
+                            vlist = [0] * int((seconds - 1))
+                            alist.append(arousal)
+                            vlist.append(valence)
+                            arousal_list.append(alist)
+                            valence_list.append(vlist)
+                            detected_users.append(len(rppg_list) - 1)
 
-                # 当前时间之前检测用户在该秒未被检测到，需要补齐
-                undetect_users = np.setdiff1d(users_num, detected_users)
-                for u in undetect_users:
-                    rppg_list[u] += [0] * ts
-                    arousal_list[u].append(0)
-                    valence_list[u].append(0)
+                        elif match is None:
+                            continue
 
-            emotion_timestamp.append(seconds * 1 * 1000)  # add time stamp
-            seconds += 1
-            frames_by_second = []
+                        else:  # Old user
+                            # Users detected in the current second
+                            if match not in detected_users:
 
-            ### 添加时间戳和人脸位置
-            if compare_locs(dict_location, temp_dict_location):
-                anchor_timestamps.append(int(total * 1 / fps * 1000 - 500))
-                anchor_locations.append(json.dumps(temp_dict_location))
-            dict_location = temp_dict_location
+                                ### Update temp_dict_location
+                                temp_dict_location[f"user_{match}"] = face_locations[idx]
 
-        # 测试，监测分析进度
-        if (total % (fps * 60) == 0) & (total > 0):
-            print(f"{total // (fps * 60)} minutes of data extraction was completed !")
-    print("各步骤耗时(ms)：", time_cos)
-    # 定义保存数据
-    rppg_columns = []
-    valence_columns = []
-    arousal_columns = []
-    rppg_datas = []
-    valence_datas = []
-    arousal_datas = []
-    for idx in range(len(user_list)):
+                                try:
+                                    _start = time.time()
+                                    rppg = calculate_rppg(face, frames, fps)
+                                    time_cos[2] += time.time() - _start
+                                except Exception as e:
+                                    rppg = [0] * int(fps)
+                                _start = time.time()
+                                valence, arousal = calculate_emotion(face, frame_selected)
+                                time_cos[3] += time.time() - _start
+                                rppg_list[match] = rppg_list[match] + rppg
+                                arousal_list[match].append(arousal)
+                                valence_list[match].append(valence)
+                                detected_users.append(match)
 
-        rppg = np.abs(rppg_list[idx])
-        # 删除异常用户-超过总时间80%未检测到人脸认为是异常用户
-        if np.percentile(rppg, 80) > 1e-3:
-            rppg_columns.append(user_list[idx])
-            valence_columns.append(user_list[idx])
-            arousal_columns.append(user_list[idx])
+                    # Users not detected in the current second need to be filled forward
+                    undetect_users = np.setdiff1d(users_num, detected_users)
+                    for u in undetect_users:
+                        rppg_list[u] += [0] * ts
+                        arousal_list[u].append(0)
+                        valence_list[u].append(0)
 
-            rppg_datas.append(rppg_list[idx])
-            valence_datas.append(valence_list[idx])
-            arousal_datas.append(arousal_list[idx])
-        else:
-            removing = res_mapping.pop("{}.jpg".format(user_list[idx]), None)
-            anchor_locations = remove_user_anchor(user_list[idx], anchor_locations)
-            if removing:
-                os.remove(removing)
+                emotion_timestamp.append(seconds * 1 * 1000)  # Add timestamp
+                seconds += 1
+                frames_by_second = []
 
-    res_mapping["max_user_num"] = len(rppg_list)  # type: ignore
+                ### Add timestamps and face locations
+                if compare_locs(dict_location, temp_dict_location):
+                    anchor_timestamps.append(int(total * 1 / fps * 1000 - 500))
+                    anchor_locations.append(json.dumps(temp_dict_location))
+                dict_location = temp_dict_location
 
-    rppg_datas = np.array(rppg_datas).T
-    valence_datas = np.array(valence_datas).T
-    arousal_datas = np.array(arousal_datas).T
+            # Test, monitor analysis progress
+            if (total % (fps * 60) == 0) & (total > 0):
+                logging.info(f"{total // (fps * 60)} minutes of data extraction was completed !")
+        # logging.info("各步骤耗时(ms)：", time_cos)
+        # Define save data
+        rppg_columns = []
+        valence_columns = []
+        arousal_columns = []
+        rppg_datas = []
+        valence_datas = []
+        arousal_datas = []
+        for idx in range(len(user_list)):
 
-    rppg_timestamp = rppg_timestamp[: rppg_datas.shape[0]]
-    emotion_timestamp = emotion_timestamp[: valence_datas.shape[0]]
+            rppg = np.abs(rppg_list[idx])
+            # Delete abnormal users - if more than 80% of the total time is not detected, consider as abnormal
+            if np.percentile(rppg, 80) > 1e-3:
+                rppg_columns.append(user_list[idx])
+                valence_columns.append(user_list[idx])
+                arousal_columns.append(user_list[idx])
 
-    ### 保存时间戳和人脸位置
-    anchor_speakers_df = pd.DataFrame(index=anchor_timestamps)
-    anchor_speakers_df["user_locs"] = convert_face_location_2_xyxy(anchor_locations)  # type: ignore
-    anchor_speakers_df.to_csv(anchor_savepath)
+                rppg_datas.append(rppg_list[idx])
+                valence_datas.append(valence_list[idx])
+                arousal_datas.append(arousal_list[idx])
+            else:
+                removing = res_mapping.pop("{}.jpg".format(user_list[idx]), None)
+                anchor_locations = remove_user_anchor(user_list[idx], anchor_locations)
+                if removing:
+                    os.remove(removing)
 
-    rppg_df = pd.DataFrame(index=rppg_timestamp, columns=rppg_columns, data=rppg_datas)
-    rppg_df.insert(loc=0, column="rppg_std", value=np.std(rppg_datas, axis=1))
-    rppg_df.insert(loc=0, column="rppg_mean", value=np.mean(rppg_datas, axis=1))
-    rppg_df.to_csv(rppg_savepath)
+        res_mapping["max_user_num"] = len(rppg_list)
 
-    v_df = pd.DataFrame(
-        index=emotion_timestamp, columns=valence_columns, data=valence_datas
-    )
-    v_df.insert(loc=0, column="v_std", value=np.std(valence_datas, axis=1))
-    v_df.insert(loc=0, column="v_mean", value=np.mean(valence_datas, axis=1))
-    v_df.to_csv(v_savepath)
+        rppg_datas = np.array(rppg_datas).T
+        valence_datas = np.array(valence_datas).T
+        arousal_datas = np.array(arousal_datas).T
 
-    a_df = pd.DataFrame(
-        index=emotion_timestamp, columns=arousal_columns, data=arousal_datas
-    )
-    a_df.insert(loc=0, column="a_std", value=np.std(arousal_datas, axis=1))
-    a_df.insert(loc=0, column="a_mean", value=np.mean(arousal_datas, axis=1))
-    a_df.to_csv(a_savepath)
-    return res_mapping
+        rppg_timestamp = rppg_timestamp[: rppg_datas.shape[0]]
+        emotion_timestamp = emotion_timestamp[: valence_datas.shape[0]]
+
+        ### Save timestamps and face locations
+        anchor_speakers_df = pd.DataFrame(index=anchor_timestamps)
+        anchor_speakers_df["user_locs"] = convert_face_location_2_xyxy(anchor_locations)
+        anchor_speakers_df.to_csv(anchor_savepath)
+
+        rppg_df = pd.DataFrame(index=rppg_timestamp, columns=rppg_columns, data=rppg_datas)
+        rppg_df.insert(loc=0, column="rppg_std", value=np.std(rppg_datas, axis=1))
+        rppg_df.insert(loc=0, column="rppg_mean", value=np.mean(rppg_datas, axis=1))
+        rppg_df.to_csv(rppg_savepath)
+
+        v_df = pd.DataFrame(
+            index=emotion_timestamp, columns=valence_columns, data=valence_datas
+        )
+        v_df.insert(loc=0, column="v_std", value=np.std(valence_datas, axis=1))
+        v_df.insert(loc=0, column="v_mean", value=np.mean(valence_datas, axis=1))
+        v_df.to_csv(v_savepath)
+
+        a_df = pd.DataFrame(
+            index=emotion_timestamp, columns=arousal_columns, data=arousal_datas
+        )
+        a_df.insert(loc=0, column="a_std", value=np.std(arousal_datas, axis=1))
+        a_df.insert(loc=0, column="a_mean", value=np.mean(arousal_datas, axis=1))
+        a_df.to_csv(a_savepath)
+        return res_mapping
+
+    except Exception as e:
+            logging.error(f"Error in rrpg: {traceback.format_exc()}")
+            return ""

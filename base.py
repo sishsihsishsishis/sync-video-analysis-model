@@ -2,10 +2,9 @@ import logging
 import re
 import sys
 import boto3
-import requests
 import time
-import redis
 import uuid
+import requests
 import os
 import shutil
 import json
@@ -19,19 +18,25 @@ aws_access_key_id = 'AKIATRKQV5SYQTJ7DBGF'
 aws_secret_access_key = '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'
 aws_region = 'us-east-2'
 
+# SQS queue URL
+on_off_queue_url = 'https://sqs.us-east-2.amazonaws.com/243371732145/sync-main.fifo'
+meetings_queue_url = 'https://sqs.us-east-2.amazonaws.com/243371732145/MeetingsQueue.fifo'
+cloudfront_base_url = 'https://d2n2ldezfv2tlg.cloudfront.net'
+
+# S3 
+s3_endpoint = 'https://s3.us-east-2.amazonaws.com'
+
 # Initialize SQS client with AWS credentials
-session = boto3.Session(
+boto = boto3.Session(
     aws_access_key_id=aws_access_key_id,
     aws_secret_access_key=aws_secret_access_key,
     region_name=aws_region
 )
 
-sqs = session.client('sqs')
-
-# SQS queue URL
-on_off_queue_url = 'https://sqs.us-east-2.amazonaws.com/243371732145/sync-main.fifo'
-meetings_queue_url = 'https://sqs.us-east-2.amazonaws.com/243371732145/MeetingsQueue.fifo'
-cloudfront_base_url = 'https://d2n2ldezfv2tlg.cloudfront.net'
+# Initialize AWS Services with AWS credentials
+sqs = boto.client('sqs')
+dynamodb = boto.resource('dynamodb')
+s3 = boto.client('s3', endpoint_url=s3_endpoint)
 
 # Receive messages from the SQS queue
 def fetch_sqs_messages(group):
@@ -50,7 +55,6 @@ def fetch_sqs_messages(group):
         filtered_messages = []
         for message in messages:
             body = json.loads(message.get('Body', '{}'))
-            print(body)
             if body.get('type') == group:
                 filtered_messages.append(message)
         
@@ -67,6 +71,19 @@ def fetch_sqs_messages(group):
         logging.error(f"Error fetching messages: {e}")
         return []
 
+# Delete message from SQS queue
+def delete_message_from_queue(message):
+    try:
+        # Delete the message from the queue
+        sqs.delete_message(
+            QueueUrl=meetings_queue_url,
+            ReceiptHandle=message['ReceiptHandle']
+        )
+        logging.info("Message deleted from the queue.")
+    except Exception as e:
+        logging.error(f"Error deleting message from the queue: {e}")
+
+# Stop instance request SQS entry
 def request_stop_instance(group):
     try:
         # Send a request to stop the instance
@@ -90,31 +107,8 @@ def request_stop_instance(group):
     except Exception as e:
         logging.error(f"Error requesting stop of instance: {e}")
 
-def delete_message_from_queue(message):
-    try:
-        # Delete the message from the queue
-        sqs.delete_message(
-            QueueUrl=meetings_queue_url,
-            ReceiptHandle=message['ReceiptHandle']
-        )
-        logging.info("Message deleted from the queue.")
-    except Exception as e:
-        logging.error(f"Error deleting message from the queue: {e}")
-
-# RETURN THE S3 INSTANCE
-def get_s3_instance():
-    # init s3
-    s3_instance = boto3.client(service_name='s3', region_name=aws_region, endpoint_url='https://s3.us-east-2.amazonaws.com', aws_access_key_id = aws_access_key_id, aws_secret_access_key = aws_secret_access_key)
-    return s3_instance
-
-# RETURN THE REDIS CLIENT INSTANCE
-def get_redis_instance():
-    pool = redis.ConnectionPool(host="18.144.11.243", port=6379, password="123456", db=0)
-    redis_instance = redis.StrictRedis(connection_pool=pool)
-    return redis_instance
-
-# DOWNLOAD RAW VIDEO FROM S3
-def download_resource(resource_path, base_cache_dir, bucket_name='sync5'):
+# Download videos from s3
+def download_video(resource_path, base_cache_dir, bucket_name='sync5'):
     try:
         logging.info(f"downloading... {resource_path}")
         start = time.time()
@@ -153,69 +147,26 @@ def download_resource(resource_path, base_cache_dir, bucket_name='sync5'):
         log = traceback.format_exc()
         logging.error(log)
 
-# UPLOAD THE OUTPUT VIDEO TO S3
+# Download resource from s3 
+def download_resource(key, filename, bucket_name='syneurgy-prod'):
+    logging.info('downloading')
+    start = time.time()
+
+    # Download the file from S3
+    s3.download_file(bucket_name, key, filename)
+
+    finish = time.time()
+    print('downloaded in ', finish - start, 's')
+    return filename
+
+# Upload resource to s3
 def upload_resource(filename, key, bucket_name='syneurgy-prod'):
     logging.info('uploading')
     start = time.time()
 
-    # initialize s3 and upload file
-    s3_instance = get_s3_instance()
-    s3_instance.upload_file(filename, bucket_name, key)
+    # Upload the file to S3
+    s3.upload_file(filename, bucket_name, key)
 
     finish = time.time()
     print('uploaded in ', finish - start, 's')
     return filename
-
-# UPLOAD FILES THROUGH ENDPOINT
-def upload_file_to_endpoint(meeting_id, file_path):
-    try:
-        id_ = re.findall('\d+', meeting_id)[0]
-        url = 'http://18.144.11.243:8080/s3/uploadByMeeting/'
-        url += id_
-
-        logging.info(f"Uploading file.. {id_} {url}")
-        files = {'file': open(file_path, 'rb')}
-        response = requests.post(url, files=files)
-        if response.ok:
-            logging.info(f"File Upload Success :) \n:::: {response.text}")
-        else:
-            logging.error(f"File Upload Error :) \n:::: {response.status_code} {response.text}")
-        logging.info(response.text)
-    except:
-        log = traceback.format_exc()
-        logging.error(log)
-
-# UPLOAD TIMESTAMPS
-def upload_timestamps(meeting_id, start, end):
-    try: 
-        logging.info(f"Uploading timestamps.. {int(start*1000)} {int(end*1000)}")
-        data = {
-            "model-emotion-detection": [int(start*1000), int(end*1000)]
-        }
-
-        id_ = re.findall('\d+', meeting_id)[0]
-        url = 'http://18.144.11.243:8080/meeting/analysis-time/' + id_
-
-        logging.info(f"Uploading file to Endpoint.. {id_} {url}")
-        response = requests.post(url, json=data)
-        if response.ok:
-            logging.info(f"Timestamps Upload Success :) \n:::: {response.text}")
-        else:
-            logging.error(f"Timestamps Upload Error :) \n:::: {response.status_code} {response.text}")
-    except:
-        log = traceback.format_exc()
-        logging.error(log)
-
-# remove double quotes from the string
-def remove_quotes(input_string):
-    if input_string.startswith('"') and input_string.endswith('"'):
-        # If the string starts and ends with double quotes
-        # Remove the first and last character (double quotes)
-        logging.info("Redis entry has double quotes :(")
-        return input_string[1:-1]
-    else:
-        # If the string does not start and end with double quotes
-        return input_string
-
-# INITIALIZE REDIS AS GLOBAL
-redis_instance = get_redis_instance()
