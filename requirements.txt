@@ -6,7 +6,7 @@ torch
 openai-whisper
 pandas
 face_recognition
-numpy
+numpy<2
 scipy
 opencv-python
 cmake
