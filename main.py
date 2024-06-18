@@ -54,7 +54,7 @@ if __name__ == '__main__':
                         video_path = f"./raw/{local_cached_filename}.mp4"
                         
                         # Delete the message from the queue
-                        # base.delete_message_from_queue(message)
+                        base.delete_message_from_queue(message)
                     
                         process_start_time = time.time()
                         

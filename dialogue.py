@@ -126,7 +126,7 @@ def go_dialogue_act(sentences):
                 padding="max_length",
                 truncation=True,
             )
-            print(sent)
+            # print(sent)
             input_encoding["input_ids"] = input_encoding["input_ids"].to(config["device"])  # type: ignore
             input_encoding["attention_mask"] = input_encoding["attention_mask"].to(config["device"])  # type: ignore
             logits = dialogueAct_model(input_encoding)
