@@ -8,9 +8,12 @@ import shutil
 import base  # basic functions
 import helpers  # helper functions
 import rppg  # model
+import dialogue # model
 from speaker import diarization
 from emotion import go_emotion
 import traceback
+import pandas as pd
+import numpy as np
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -51,7 +54,7 @@ if __name__ == '__main__':
                         video_path = f"./raw/{local_cached_filename}.mp4"
                         
                         # Delete the message from the queue
-                        base.delete_message_from_queue(message)
+                        # base.delete_message_from_queue(message)
                     
                         process_start_time = time.time()
                         
@@ -102,6 +105,12 @@ if __name__ == '__main__':
                         diarization_result, emotion_data = helpers.process_diarization_and_emotion(diarization_path)
                         emotion_labels = go_emotion(emotion_data)
                         emotion_path = helpers.save_emotion_results(emotion_labels, diarization_result, meeting_id)
+
+                        # Dialogue model
+                        logging.info(f"Running dialogue model...")
+                        emotion_texts, text = helpers.load_emotion_data()
+                        dialogue_act_labels = dialogue.go_dialogue_act(text)
+                        helpers.save_dialogue_act_labels(dialogue_act_labels, emotion_texts, meeting_id)
 
                     except Exception as e:
                         logging.error(f"Error processing message: {e}")

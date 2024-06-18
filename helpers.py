@@ -2,7 +2,7 @@
 
 import numpy as np
 import speaker
-from base import dynamodb, s3, upload_resource, sqs
+from base import dynamodb, s3, upload_resource, sqs, on_off_queue_url
 from decimal import Decimal
 from decimal import Decimal, getcontext, Inexact, Rounded
 import re
@@ -393,3 +393,88 @@ def save_emotion_results(emotion_labels, speaker_diarization, meeting_id, output
     )
     
     return emotion_res_path
+
+# load emotion data for dialogue processing
+def load_emotion_data(data_path='./data/emotion.txt'):
+    """
+    Load emotion data from a text file into a pandas DataFrame.
+    
+    Parameters:
+    data_path (str): Path to the text file containing emotion data.
+    
+    Returns:
+    pd.DataFrame: DataFrame containing loaded emotion data.
+    """
+    try:
+        emotion_data = pd.read_csv(data_path, index_col=None, sep="\t")
+        
+        text = []
+        for _emotion_data in emotion_data.itertuples(index=False):
+            text.append(str(_emotion_data.Sentence).lower())  # type: ignore
+        
+        logging.info(f"Emotion data loaded successfully from {data_path}.")
+        return emotion_data, text
+    
+    except Exception as e:
+        logging.error(f"Failed to load emotion data from {data_path}: {str(e)}")
+        return None
+    
+# save dialogue data to csv & DDB
+def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cache_dir = './data', output_filename="dialogue.txt"):
+    """
+    Save the dialogue act labels combined with emotion text data to a text file.
+    
+    Parameters:
+    dialogue_act_labels (list): A list of dialogue act labels.
+    emotion_data (pd.DataFrame): A DataFrame containing emotion text data.
+    cache_dir (str): Directory where the output file will be saved.
+    output_filename (str): The name of the output file. Default is 'dialogue.txt'.
+    
+    Returns:
+    str: The path to the saved file.
+    """
+    nlp_res = []
+    for dialogue_act_label, _e_text in zip(dialogue_act_labels, emotion_data.values):
+        _e_text = _e_text.tolist()
+        _e_text.append(dialogue_act_label)
+        nlp_res.append(_e_text)
+
+    headers = emotion_data.columns.tolist()
+    headers.append("DialogueAct")  # type: ignore
+
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+
+    res_path = os.path.join(cache_dir, output_filename)
+    pd.DataFrame(np.array(nlp_res), columns=headers).to_csv(res_path, index=False, sep="\t")
+    
+    mapped_res = [
+        {
+            "speaker": segment[0],
+            "start": float_to_decimal(segment[1]),
+            "end": float_to_decimal(segment[2]),
+            "sentence": segment[3],
+            "emotion": segment[4],
+            "dialogue": segment[5],
+        }
+        for segment in nlp_res
+    ]
+    # Initialize DynamoDB resource
+    table = dynamodb.Table(table_name)
+
+    item = {
+        'id': meeting_id, 
+        'dialogue': mapped_res
+    }
+    # print(item)
+    
+    logging.info(f"Saving dialogue to DDB... {meeting_id}")
+    res = table.update_item(
+        Key={'id': meeting_id},
+        UpdateExpression="SET dialogue = :dialogue",
+        ExpressionAttributeValues={':dialogue': mapped_res}
+    )
+    
+    print(res)
+    
+    return res_path
