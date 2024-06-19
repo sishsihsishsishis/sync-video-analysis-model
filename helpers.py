@@ -57,10 +57,10 @@ def send_message_to_sqs(object_key, meeting_id, message_type, bucket_name = 'syn
             MessageGroupId=message_type,
             MessageDeduplicationId=f'{message_type}-{meeting_id}'
         )
-        print(response)
+        logging.info(response)
         logging.info(f'Message sent to SQS queue.')
     except Exception as e:
-        print(f'An error occurred: {e}')
+        logging.info(f'An error occurred: {e}')
 
 
 def change_fps(source_video_path, output_file_path, target_fps=25):
@@ -110,7 +110,7 @@ def change_fps(source_video_path, output_file_path, target_fps=25):
     
     except Exception as e:
         logging.error(f"An error occurred: {e}")
-        traceback.print_exc()
+        traceback.logging.info_exc()
         return None
 
 def extract_audio(video_path, audio_path=None):
@@ -146,7 +146,7 @@ def extract_audio(video_path, audio_path=None):
 
     except Exception as e:
         logging.error(f"An error occurred while extracting audio: {e}")
-        traceback.print_exc()
+        traceback.logging.info_exc()
         return None
 
 
@@ -171,7 +171,7 @@ def asr_transcribe(wav_file):
     # Transcribe using Whisper model
     result = WHISPER_MODEL.transcribe(wav_file)
 
-    # print(result)
+    # logging.info(result)
     return result["segments"]
 
 def save_transcription_to_file(transcript_segments, output_path):
@@ -184,7 +184,7 @@ def save_transcription_to_file(transcript_segments, output_path):
     """
     # Convert the list of segments to a DataFrame and write to CSV
     pd.DataFrame(transcript_segments).to_csv(output_path, index=False, sep="\t")
-    print(f'Transcription saved to: {output_path}\n\n\n')
+    logging.info(f'Transcription saved to: {output_path}\n\n\n')
 
 
 def match_speakers_asr(speaker_chunks, meeting_id, asr_path="./data/transcription.txt", output_dir='./data/'):
@@ -261,7 +261,7 @@ def match_speakers_asr(speaker_chunks, meeting_id, asr_path="./data/transcriptio
         return concat_res_path
 
     except Exception as e:
-        print(f"An error occurred: {e}")
+        logging.info(f"An error occurred: {e}")
         return None
 
 
@@ -282,12 +282,12 @@ def get_speaker_count(directory='data'):
         jpg_files = [file for file in os.listdir(directory) if file.lower().endswith('.jpg')]
         jpg_count = len(jpg_files)
 
-        print(f"Found {jpg_count} .jpg files in '{directory}'")
+        logging.info(f"Found {jpg_count} .jpg files in '{directory}'")
         return (jpg_count, jpg_files)
 
     except Exception as e:
-        print(f"An error occurred: {e}")
-        traceback.print_exc()
+        logging.info(f"An error occurred: {e}")
+        traceback.logging.info_exc()
         return 0
 
 def pad_filename(filename):
@@ -308,7 +308,7 @@ def upload_detected_avatars(jpg_files, meeting_id, bucket_name='syneurgy-prod'):
 
     # Upload each file using the base.upload_resource function
     for file_path, key in file_key_tuples:
-        print(f'uploading {file_path} to {key} in bucket {bucket_name}')
+        logging.info(f'uploading {file_path} to {key} in bucket {bucket_name}')
         upload_resource(file_path, key, bucket_name)
     
     return file_key_tuples
@@ -384,7 +384,7 @@ def save_emotion_results(emotion_labels, speaker_diarization, meeting_id, output
         'id': meeting_id, 
         'emotionText': mapped_res
     }
-    # print(item)
+    # logging.info(item)
     
     logging.info(f"Saving emotion to DDB... {meeting_id}")
     table.update_item(
@@ -467,7 +467,7 @@ def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cach
         'id': meeting_id, 
         'dialogue': mapped_res
     }
-    # print(item)
+    # logging.info(item)
     
     logging.info(f"Saving dialogue to DDB... {meeting_id}")
     res = table.update_item(
@@ -476,6 +476,105 @@ def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cach
         ExpressionAttributeValues={':dialogue': mapped_res}
     )
     
-    print(res)
+    logging.info(res)
     
     return res_path
+
+
+
+# upload csv files for rppg model 
+def float_to_decimal(f):
+    return Decimal(str(f))
+
+def rename_headers(df):
+    # logging.info(df)
+    # logging.info(df.columns[0], " first column")
+    # Check if the first header is "Unnamed: 0" and rename it to '_'
+    if df.columns[0] == 'Unnamed: 0':
+        # logging.info('Renaming the first column to "_"')
+        df.columns = ['_'] + df.columns[1:].tolist()
+    return df
+
+def process_a_result(df):
+    df = rename_headers(df)
+    return [
+        {
+            "_": float_to_decimal(row['_']),
+            "a_mean": float_to_decimal(row['a_mean']),
+            "a_std": float_to_decimal(row['a_std']),
+            "user_0": float_to_decimal(row['user_0']),
+            "user_1": float_to_decimal(row['user_1'])
+        }
+        for index, row in df.iterrows()
+    ]
+
+def process_v_result(df):
+    df = rename_headers(df)
+    return [
+        {
+            "_": float_to_decimal(row['_']),
+            "v_mean": float_to_decimal(row['v_mean']),
+            "v_std": float_to_decimal(row['v_std']),
+            "user_0": float_to_decimal(row['user_0']),
+            "user_1": float_to_decimal(row['user_1'])
+        }
+        for index, row in df.iterrows()
+    ]
+
+def process_rppg_result(df):
+    df = rename_headers(df)
+    return [
+        {
+            "_": float_to_decimal(row['_']),
+            "rppg_mean": float_to_decimal(row['rppg_mean']),
+            "rppg_std": float_to_decimal(row['rppg_std']),
+            "user_0": float_to_decimal(row['user_0']),
+            "user_1": float_to_decimal(row['user_1'])
+        }
+        for index, row in df.iterrows()
+    ]
+
+def process_anchor_result(df):
+    df = rename_headers(df)
+    return [
+        {
+            "_": float_to_decimal(row['_']),
+            "user_locs": row['user_locs']
+        }
+        for index, row in df.iterrows()
+    ]
+
+def upload_csv_to_dynamodb(file_path, meeting_id, result_type):
+    try:
+        # Read the CSV file using pandas
+        df = pd.read_csv(file_path)
+
+        # Process the data based on the result_type
+        if result_type == 'a_result':
+            concat_res = process_a_result(df)
+        elif result_type == 'v_result':
+            concat_res = process_v_result(df)
+        elif result_type == 'rppg_result':
+            concat_res = process_rppg_result(df)
+        elif result_type == 'anchor_result':
+            concat_res = process_anchor_result(df)
+        else:
+            raise ValueError("Unsupported result type")
+        # Initialize DynamoDB resource
+        table = dynamodb.Table(table_name)
+        
+        # Create the item with meeting_id and the result data
+        item = {
+            'id': meeting_id,
+            result_type: concat_res
+        }
+
+        # Update the item in the DynamoDB table
+        table.update_item(
+            Key={'id': meeting_id},
+            UpdateExpression=f"SET {result_type} = :result",
+            ExpressionAttributeValues={f':result': concat_res}
+        )
+        logging.info(f"{result_type} data uploaded successfully.")
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")

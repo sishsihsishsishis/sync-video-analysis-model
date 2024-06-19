@@ -76,6 +76,11 @@ if __name__ == '__main__':
                         logging.info(f"Uploading detected avatars...")
                         helpers.upload_detected_avatars(jpg_files, meeting_id)
                         
+                        helpers.upload_csv_to_dynamodb('./data/a_results.csv', meeting_id, 'a_result')
+                        helpers.upload_csv_to_dynamodb('./data/v_results.csv', meeting_id, 'v_result')
+                        helpers.upload_csv_to_dynamodb('./data/rppg_results.csv', meeting_id, 'rppg_result')
+                        helpers.upload_csv_to_dynamodb('./data/anchor_results.csv', meeting_id, 'anchor_result')
+                        
                         # Extract audio
                         logging.info(f"Extracting audio...")
                         wav_file = helpers.extract_audio(resample_path)
