@@ -18,6 +18,7 @@ import torch
 import whisper
 from moviepy.editor import VideoFileClip
 import json
+from services.gpt import GptServiceImpl
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -460,15 +461,15 @@ def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cach
         }
         for segment in nlp_res
     ]
+    
+    # GENERATE MEETING SUMMARY
+    gpt_service = GptServiceImpl()
+    summary = gpt_service.summary_nlp(mapped_res, meeting_id, {})
+    print(summary)
+    
     # Initialize DynamoDB resource
     table = dynamodb.Table(table_name)
 
-    item = {
-        'id': meeting_id, 
-        'dialogue': mapped_res
-    }
-    # logging.info(item)
-    
     logging.info(f"Saving dialogue to DDB... {meeting_id}")
     res = table.update_item(
         Key={'id': meeting_id},
@@ -476,7 +477,15 @@ def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cach
         ExpressionAttributeValues={':dialogue': mapped_res}
     )
     
+    logging.info(f"Saving summary to DDB... {meeting_id}")
+    summary_res = table.update_item(
+        Key={'id': meeting_id},
+        UpdateExpression="SET summary = :summary",
+        ExpressionAttributeValues={':summary': summary}
+    )
+    
     logging.info(res)
+    logging.info(summary_res)
     
     return res_path
 
