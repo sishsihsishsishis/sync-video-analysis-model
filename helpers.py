@@ -422,7 +422,7 @@ def load_emotion_data(data_path='./data/emotion.txt'):
         return None
     
 # save dialogue data to csv & DDB
-def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cache_dir = './data', output_filename="dialogue.txt"):
+def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cache_dir='./data', output_filename="dialogue.txt"):
     """
     Save the dialogue act labels combined with emotion text data to a text file.
     
@@ -464,31 +464,37 @@ def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cach
     
     # GENERATE MEETING SUMMARY
     gpt_service = GptServiceImpl()
-    summary = gpt_service.summary_nlp(mapped_res, meeting_id, {})
+    summary, team_highlights, user_highlights = gpt_service.summary_nlp(mapped_res)
     print(summary)
     
     # Initialize DynamoDB resource
     table = dynamodb.Table(table_name)
 
-    logging.info(f"Saving dialogue to DDB... {meeting_id}")
-    res = table.update_item(
-        Key={'id': meeting_id},
-        UpdateExpression="SET dialogue = :dialogue",
-        ExpressionAttributeValues={':dialogue': mapped_res}
-    )
+    logging.info(f"Saving data to DDB... {meeting_id}")
     
-    logging.info(f"Saving summary to DDB... {meeting_id}")
-    summary_res = table.update_item(
-        Key={'id': meeting_id},
-        UpdateExpression="SET summary = :summary",
-        ExpressionAttributeValues={':summary': summary}
-    )
-    
-    logging.info(res)
-    logging.info(summary_res)
+    try:
+        res = table.update_item(
+            Key={'id': meeting_id},
+            UpdateExpression="""
+                SET 
+                    dialogue = :dialogue,
+                    summary = :summary,
+                    team_highlights = :team_highlights,
+                    user_highlights = :user_highlights
+            """,
+            ExpressionAttributeValues={
+                ':dialogue': mapped_res,
+                ':summary': summary,
+                ':team_highlights': team_highlights,
+                ':user_highlights': user_highlights
+            }
+        )
+        logging.info(f"dialogue, summary, team_highlights & user_highlights saved to ddb: {res}")
+    except Exception as e:
+        logging.error(f"Failed to update DynamoDB table for meeting_id {meeting_id}: {e}")
+        return None
     
     return res_path
-
 
 
 # upload csv files for rppg model 
