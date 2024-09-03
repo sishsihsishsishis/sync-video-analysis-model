@@ -1,35 +1,32 @@
 # import redis
-import subprocess
 import os
 import time
 import logging
 import json
 import shutil
+import traceback
 import base  # basic functions
 import helpers  # helper functions
 import rppg  # model
-import dialogue # model
+import dialogue  # model
 from speaker import diarization
 from emotion import go_emotion
-import traceback
-import pandas as pd
-import numpy as np
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 if __name__ == '__main__':
-    no_message_count = 0
-    max_no_message_count = 5
-    group = 'analysis'  # Specify the appropriate group for stopping the instance
+    NO_MESSAGE_COUNT = 0
+    MAX_NO_MESSSAGE_COUNT = 5
+    GROUP = 'analysis'
 
     while True:
         try:
             logging.info("Fetching messages from SQS...")
-            messages = base.fetch_sqs_messages(group)
+            messages = base.fetch_sqs_messages(GROUP)
 
             if messages:
-                no_message_count = 0  # Reset the counter when messages are received
+                NO_MESSAGE_COUNT = 0  # Reset the counter
                 cache_dir = "./data"
                 asr_path = "./data/transcription.txt"
                 diarization_path = "./data/diarization.txt"
@@ -81,6 +78,9 @@ if __name__ == '__main__':
                         helpers.upload_csv_to_dynamodb('./data/rppg_results.csv', meeting_id, 'rppg_result')
                         helpers.upload_csv_to_dynamodb('./data/anchor_results.csv', meeting_id, 'anchor_result')
                         
+                        # process and save heatmap
+                        helpers.process_heatmap(meeting_id)
+                        
                         # Extract audio
                         logging.info(f"Extracting audio...")
                         wav_file = helpers.extract_audio(resample_path)
@@ -122,14 +122,14 @@ if __name__ == '__main__':
                         traceback.print_exc()
                     
             else:
-                no_message_count += 1  # Increment the counter if no messages are received
-                if no_message_count >= max_no_message_count:
-                    logging.info(f"Requesting stop for the instance in group: {group}")
-                    base.request_stop_instance(group)
-                    no_message_count = 0  # Reset the counter after requesting stop
+                NO_MESSAGE_COUNT += 1  # Increment the counter if no messages are received
+                if NO_MESSAGE_COUNT >= MAX_NO_MESSSAGE_COUNT:
+                    logging.info(f"Requesting stop for the instance in group: {GROUP}")
+                    base.request_stop_instance(GROUP)
+                    NO_MESSAGE_COUNT = 0  # Reset the counter after requesting stop
             
         except Exception as e:
             logging.error(f"Error in main loop: {e}")
             traceback.print_exc()
-        logging.info(f"Message Count: {no_message_count}")
+        logging.info(f"Message Count: {NO_MESSAGE_COUNT}")
         time.sleep(20)  # Wait for 20 seconds before polling again

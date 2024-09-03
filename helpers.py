@@ -19,6 +19,7 @@ import whisper
 from moviepy.editor import VideoFileClip
 import json
 from services.gpt import GptServiceImpl
+from services.heatmap import va_heatmap
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -31,7 +32,7 @@ def float_to_decimal(f):
     return Decimal(str(f))
 
 
-def send_message_to_sqs(object_key, meeting_id, message_type, bucket_name = 'syneurgy-prod'):
+def send_message_to_sqs(object_key, meeting_id, message_type, bucket_name='syneurgy-prod', queue_url=on_off_queue_url):
     """
     Send a message to an SQS queue.
 
@@ -53,7 +54,7 @@ def send_message_to_sqs(object_key, meeting_id, message_type, bucket_name = 'syn
 
         # Send the message to the SQS queue
         response = sqs.send_message(
-            QueueUrl=on_off_queue_url,
+            QueueUrl=queue_url,
             MessageBody=json.dumps(message_body),
             MessageGroupId=message_type,
             MessageDeduplicationId=f'{message_type}-{meeting_id}'
@@ -578,12 +579,6 @@ def upload_csv_to_dynamodb(file_path, meeting_id, result_type):
         # Initialize DynamoDB resource
         table = dynamodb.Table(table_name)
         
-        # Create the item with meeting_id and the result data
-        item = {
-            'id': meeting_id,
-            result_type: concat_res
-        }
-
         # Update the item in the DynamoDB table
         table.update_item(
             Key={'id': meeting_id},
@@ -591,5 +586,60 @@ def upload_csv_to_dynamodb(file_path, meeting_id, result_type):
             ExpressionAttributeValues={f':result': concat_res}
         )
         logging.info(f"{result_type} data uploaded successfully.")
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
+
+def convert_to_native_types(data):
+    """Convert NumPy types to native Python types."""
+    if isinstance(data, (np.integer, np.floating)):
+        return data.item()
+    elif isinstance(data, list):
+        return [convert_to_native_types(item) for item in data]
+    elif isinstance(data, dict):
+        return {key: convert_to_native_types(value) for key, value in data.items()}
+    else:
+        return data
+
+def process_heatmap(meeting_id, a_result_path='./data/a_results.csv', v_result_path='./data/v_results.csv'):
+    """
+    Process heatmap data from the given CSV files and update the results in DynamoDB.
+
+    :param meeting_id: ID of the meeting
+    :param a_result_path: Path to the A results CSV file
+    :param v_result_path: Path to the V results CSV file
+    """
+    try:
+        logging.info("Processing heatmap...")
+
+        # Read the CSV files
+        dfA = pd.read_csv(a_result_path)
+        dfV = pd.read_csv(v_result_path)
+
+        # Convert DataFrame to an array of arrays, removing the headers
+        dataA = dfA.values.tolist()
+        dataV = dfV.values.tolist()
+
+        # Convert each element to a string
+        dataA_strings = [[str(item) for item in row] for row in dataA]
+        dataV_strings = [[str(item) for item in row] for row in dataV]
+
+        # Print the formatted data (for debugging purposes)
+        print(dataA_strings, dataV_strings)
+
+        heatmap_result = va_heatmap(meeting_id, dataV_strings, dataA_strings, 100)
+
+        # Convert heatmap_result to native Python types
+        heatmap_result = convert_to_native_types(heatmap_result)
+
+        # Access the DynamoDB table
+        table = dynamodb.Table(table_name)
+        table.update_item(
+            Key={'id': meeting_id},
+            UpdateExpression="SET heatmap = :result",
+            ExpressionAttributeValues={':result': heatmap_result}
+        )
+
+        logging.info("Heatmap data uploaded successfully.")
+
     except Exception as e:
         logging.error(f"An error occurred: {e}")
