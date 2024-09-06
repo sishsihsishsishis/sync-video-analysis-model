@@ -20,6 +20,7 @@ from moviepy.editor import VideoFileClip
 import json
 from services.gpt import GptServiceImpl
 from services.heatmap import va_heatmap
+from services.nlp import word_count, calculate_speaker_time, calculate_speaker_rate_in_chunks
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -466,7 +467,18 @@ def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cach
     # GENERATE MEETING SUMMARY
     gpt_service = GptServiceImpl()
     summary, team_highlights, user_highlights = gpt_service.summary_nlp(mapped_res)
-    print(summary)
+    # print(summary)
+    
+    # GET WORD COUNT 
+    word_count_data = word_count(mapped_res)
+    speaker_time = calculate_speaker_time(mapped_res)
+    speaker_rate = calculate_speaker_rate_in_chunks(mapped_res)
+    # print()
+    # print(word_count_data, speaker_time, speaker_rate)
+    # print()
+    word_count_data = {k: {str(ks): Decimal(str(vs)) for ks, vs in v.items()} for k, v in word_count_data.items()}
+    speaker_time = {k: Decimal(str(v)) for k, v in speaker_time.items()}
+    speaker_rate = {k: {str(ks): Decimal(str(vs)) for ks, vs in v.items()} for k, v in speaker_rate.items()}
     
     # Initialize DynamoDB resource
     table = dynamodb.Table(table_name)
@@ -481,13 +493,19 @@ def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cach
                     dialogue = :dialogue,
                     summary = :summary,
                     team_highlights = :team_highlights,
-                    user_highlights = :user_highlights
+                    user_highlights = :user_highlights, 
+                    word_count = :word_count_data,
+                    speaker_time = :speaker_time,
+                    speaker_rate = :speaker_rate
             """,
             ExpressionAttributeValues={
                 ':dialogue': mapped_res,
                 ':summary': summary,
                 ':team_highlights': team_highlights,
-                ':user_highlights': user_highlights
+                ':user_highlights': user_highlights,
+                ":word_count_data": word_count_data,
+                ":speaker_time": speaker_time,
+                ":speaker_rate": speaker_rate
             }
         )
         logging.info(f"dialogue, summary, team_highlights & user_highlights saved to ddb: {res}")
@@ -624,7 +642,7 @@ def process_heatmap(meeting_id, a_result_path='./data/a_results.csv', v_result_p
         dataV_strings = [[str(item) for item in row] for row in dataV]
 
         # Print the formatted data (for debugging purposes)
-        print(dataA_strings, dataV_strings)
+        # print(dataA_strings, dataV_strings)   
 
         heatmap_result = va_heatmap(meeting_id, dataV_strings, dataA_strings, 100)
 
