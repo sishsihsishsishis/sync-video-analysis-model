@@ -51,7 +51,7 @@ if __name__ == '__main__':
                         video_path = f"./raw/{local_cached_filename}.mp4"
                         
                         # Delete the message from the queue
-                        base.delete_message_from_queue(message)
+                        # base.delete_message_from_queue(message)
                     
                         process_start_time = time.time()
                         
@@ -115,7 +115,8 @@ if __name__ == '__main__':
                         logging.info(f"Running dialogue model...")
                         emotion_texts, text = helpers.load_emotion_data()
                         dialogue_act_labels = dialogue.go_dialogue_act(text)
-                        helpers.save_dialogue_act_labels(dialogue_act_labels, emotion_texts, meeting_id)
+                        unique_speakers = helpers.save_dialogue_act_labels(dialogue_act_labels, emotion_texts, meeting_id)
+                        helpers.upload_participation_emotion('./data/a_results.csv', './data/v_results.csv', unique_speakers, meeting_id)
 
                     except Exception as e:
                         logging.error(f"Error processing message: {e}")

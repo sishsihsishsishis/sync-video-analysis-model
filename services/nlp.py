@@ -1,4 +1,6 @@
+import math
 from decimal import Decimal
+from collections import defaultdict, OrderedDict
 
 # Helper function to calculate time slot
 def calculate_time_slot(start_time, end_time, chunk_size=30):
@@ -95,3 +97,204 @@ def calculate_speaker_rate_in_chunks(nlp_data, chunk_size=30):
             current_time += chunk_size
 
     return word_rates
+
+def get_pie_and_bar(data, users):
+    
+    # Initialize all necessary lists
+    s_keys = []
+    s_time = []
+    s_rate = []
+    e_keys = []
+    e_time = []
+    e_rate = []
+    a_keys = []
+    a_time = []
+    a_rate = []
+    bar_speakers = []
+    bar_emotions = []
+    total = []
+    sentences_array = []
+
+    # Initialize speakers and emotion time tracking
+    speakers_time = [0.0] * len(users)
+    speakers_time_sep_by_emotions = [[0.0] * 3 for _ in range(len(users))]
+    emotions_time = [0.0] * 3
+    acts_time = [0.0] * 7
+
+    # Mappings for speakers, emotions, and actions
+    speakers_ind = {user: i for i, user in enumerate(users)}
+    emotions_ind = {'negative': 0, 'neutral': 1, 'positive': 2}
+    acts_ind = {
+        'Statement-non-opinion': 0, 'Statement-opinion': 1, 'Collaborative Completion': 2,
+        'Abandoned or Turn-Exit': 3, 'Uninterpretable': 4, 'Yes-No-Question': 5, 'Others': 6
+    }
+
+    # Process each row in the data
+    for row in data:
+        speaker = row['speaker']
+        start = float(row['start'])
+        end = float(row['end'])
+        sentence = row['sentence']
+        emotion = row['emotion']
+        act = row['dialogue']
+        
+        start, end = float(start), float(end)
+        delta_time = end - start
+        act = act if act in acts_ind else 'Others'
+        speakers_time[speakers_ind[speaker]] += delta_time
+        emotions_time[emotions_ind[emotion]] += delta_time
+        acts_time[acts_ind[act]] += delta_time
+        speakers_time_sep_by_emotions[speakers_ind[speaker]][emotions_ind[emotion]] += delta_time
+        sentences_array.append(sentence)
+
+    # Calculate total time
+    total_time = sum(speakers_time)
+    total.append(total_time)
+
+    # Populate speaker data
+    for speaker, index in speakers_ind.items():
+        s_keys.append(speaker)
+        s_time.append(round(Decimal(speakers_time[index]), 4))
+        s_rate.append(round(Decimal(speakers_time[index] / total_time), 4))
+
+    # Populate emotion data
+    for emotion, index in emotions_ind.items():
+        e_keys.append(emotion)
+        e_time.append(round(Decimal(emotions_time[index]), 3))
+        e_rate.append(round(Decimal(emotions_time[index] / total_time), 3))
+
+    # Populate action data
+    for act, index in acts_ind.items():
+        a_keys.append(act)
+        a_time.append(round(Decimal(acts_time[index]), 3))
+        a_rate.append(round(Decimal(acts_time[index] / total_time), 3))
+
+    # Populate bar_speakers with speaker time per emotion
+    for i in range(len(speakers_time_sep_by_emotions)):
+        bar_speakers.append([round(Decimal(val), 3) for val in speakers_time_sep_by_emotions[i]])
+
+    # Return all variables directly
+    return s_keys, s_time, s_rate, e_keys, e_time, e_rate, a_keys, a_time, a_rate, bar_speakers, total, sentences_array
+
+
+def get_radar_components(speakers_time, total_time, acts_time, emotions_time, sentences_array, radar_chart_list, r_keys, users):
+    
+    print("speakers_time:", speakers_time)
+    print("total_time:", total_time)
+    print("acts_time:", acts_time)
+    print("emotions_time:", emotions_time)
+    print("sentences_array:", sentences_array)
+    
+    
+    radar_chart_ind = OrderedDict({
+        "Equal Participation": 0,
+        "Enjoyment": 1,
+        "Shared Goal Commitment": 2,
+        "Absorption or Task Engagement": 3,
+        "Trust and Psychological Safety": 4
+    })
+    
+    radar_chart_array = [0.0] * 5
+
+    acts_ind = OrderedDict({
+        "Statement-non-opinion": 0,
+        "Statement-opinion": 1,
+        "Collaborative Completion": 2,
+        "Abandoned or Turn-Exit": 3,
+        "Uninterpretable": 4,
+        "Yes-No-Question": 5,
+        "Others": 6
+    })
+
+    num_users = len(users)
+    max_entropy = -math.log(1.0 / num_users) / math.log(2)
+    
+    speakers_time_rate = [time / Decimal(total_time) for time in speakers_time]
+    
+    entropy = sum(-float(rate) * (math.log(float(rate)) / math.log(2)) for rate in speakers_time_rate)
+    equal_participation = entropy / max_entropy
+    
+    if math.isnan(equal_participation) or math.isinf(equal_participation):
+        equal_participation = 0.1
+    if equal_participation > 0.618:
+        equal_participation = 0.5 + 1 / (1 + math.exp(-15 * (equal_participation - 1)))
+
+    radar_chart_array[0] = equal_participation
+
+    # Trust and Psychological Safety
+    opinion_time = acts_time[acts_ind["Statement-opinion"]]
+    non_opinion_time = acts_time[acts_ind["Statement-non-opinion"]]
+    op_rate = opinion_time / (opinion_time + non_opinion_time)
+    t = [equal_participation, op_rate]
+    trust_psychological_safety = softmax_weights_output(t)
+    
+    if math.isnan(trust_psychological_safety) or math.isinf(trust_psychological_safety):
+        trust_psychological_safety = 0.1
+
+    radar_chart_array[4] = trust_psychological_safety
+
+    # Enjoyment (NLP Emotion)
+    emotions_ind = OrderedDict({
+        "Negative": 0,
+        "Neutral": 1,
+        "Positive": 2
+    })
+
+    positive_time = emotions_time[emotions_ind["Positive"]]
+    negative_time = emotions_time[emotions_ind["Negative"]]
+    nlp_enjoyment = positive_time / (positive_time + negative_time)
+    
+    if math.isnan(nlp_enjoyment):
+        nlp_enjoyment = 0.1
+    if nlp_enjoyment > 0.95:
+        nlp_enjoyment = 0.95
+    if nlp_enjoyment > 0.618:
+        nlp_enjoyment = 0.5 + 1 / (1 + math.exp(-15 * (nlp_enjoyment - 1)))
+    if nlp_enjoyment < 0.1:
+        nlp_enjoyment = 0.1
+
+    radar_chart_array[1] = nlp_enjoyment
+
+    # Shared Goal Commitment
+    i_we_num = [0, 0]
+    
+    for s in sentences_array:
+        words = s.split()
+        for word in words:
+            if word.lower() in ["i", "i'", "we", "we'"]:
+                if word.lower().startswith("i"):
+                    i_we_num[0] += 1
+                elif word.lower().startswith("we"):
+                    i_we_num[1] += 1
+    
+    shared_goal_commitment = i_we_num[1] * 1.0 / (i_we_num[0] + i_we_num[1]) if (i_we_num[0] + i_we_num[1]) > 0 else 0
+    shared_goal_commitment = min(shared_goal_commitment * 1.5, 8.5)
+    
+    radar_chart_array[2] = shared_goal_commitment
+
+    # Absorption or Task Engagement
+    act_time_abandoned_rate = acts_time[acts_ind["Abandoned or Turn-Exit"]] / Decimal(total_time)
+    act_time_not_abandoned_rate = Decimal(1.0) - Decimal(act_time_abandoned_rate)
+    pn_rate = (positive_time + negative_time) / Decimal(total_time)
+    ap = [act_time_not_abandoned_rate, pn_rate]
+    absorption_or_task_engagement = softmax_weights_output(ap)
+    
+    if math.isnan(absorption_or_task_engagement) or math.isinf(absorption_or_task_engagement):
+        absorption_or_task_engagement = 0.1
+    
+    radar_chart_array[3] = absorption_or_task_engagement
+
+    # Final Radar Chart List
+    for d in radar_chart_array:
+        radar_chart_list.append(round(d, 3) if d is not None and not math.isinf(d) and not math.isnan(d) else 0.1)
+
+    r_keys.extend(radar_chart_ind.keys())
+
+def softmax_weights_output(t):
+    # Placeholder implementation for softmax weights output
+    max_t = max(t)
+    exp_t = [math.exp(Decimal(i) - Decimal(max_t)) for i in t]
+    sum_exp_t = sum(exp_t)
+    softmax = [i / sum_exp_t for i in exp_t]
+    weighted_sum = sum(Decimal(w) * Decimal(t[i]) for i, w in enumerate(softmax))
+    return weighted_sum

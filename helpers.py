@@ -18,9 +18,11 @@ import torch
 import whisper
 from moviepy.editor import VideoFileClip
 import json
+import hashlib
 from services.gpt import GptServiceImpl
 from services.heatmap import va_heatmap
-from services.nlp import word_count, calculate_speaker_time, calculate_speaker_rate_in_chunks
+from services.nlp import word_count, calculate_speaker_time, calculate_speaker_rate_in_chunks, get_pie_and_bar, get_radar_components
+from services.pea import get_positive_and_negative
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -58,7 +60,8 @@ def send_message_to_sqs(object_key, meeting_id, message_type, bucket_name='syneu
             QueueUrl=queue_url,
             MessageBody=json.dumps(message_body),
             MessageGroupId=message_type,
-            MessageDeduplicationId=f'{message_type}-{meeting_id}'
+            MessageDeduplicationId=hashlib.md5(f'{message_type}-{meeting_id}'.encode()).hexdigest()
+            
         )
         logging.info(response)
         logging.info(f'Message sent to SQS queue.')
@@ -467,19 +470,40 @@ def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cach
     # GENERATE MEETING SUMMARY
     gpt_service = GptServiceImpl()
     summary, team_highlights, user_highlights = gpt_service.summary_nlp(mapped_res)
-    # print(summary)
     
     # GET WORD COUNT 
     word_count_data = word_count(mapped_res)
     speaker_time = calculate_speaker_time(mapped_res)
     speaker_rate = calculate_speaker_rate_in_chunks(mapped_res)
-    # print()
-    # print(word_count_data, speaker_time, speaker_rate)
-    # print()
+    
     word_count_data = {k: {str(ks): Decimal(str(vs)) for ks, vs in v.items()} for k, v in word_count_data.items()}
     speaker_time = {k: Decimal(str(v)) for k, v in speaker_time.items()}
     speaker_rate = {k: {str(ks): Decimal(str(vs)) for ks, vs in v.items()} for k, v in speaker_rate.items()}
     
+    # Extract unique speakers from mapped_res
+    unique_speakers = list({segment["speaker"] for segment in mapped_res})
+    
+    # PIE & BAR
+    s_keys, s_time, s_rate, e_keys, e_time, e_rate, a_keys, a_time, a_rate, bar_speakers, total, sentences_array = get_pie_and_bar(mapped_res, unique_speakers)
+    
+    # Initialize empty lists for radar chart data
+    r_keys = []
+    radar_chart_list = []
+    get_radar_components(s_time, total[0], a_time, e_time, sentences_array, radar_chart_list, r_keys, unique_speakers)
+    
+    # Prepare dimensions for DynamoDB (snake_case)
+    raw_dimensions = {key: Decimal(str(value)) for key, value in zip(r_keys, radar_chart_list)}
+    dimensions_map = {
+        "Absorption or Task Engagement": "absorptionOrTaskEngagement",
+        "Enjoyment": "enjoyment",
+        "Equal Participation": "equalParticipation",
+        "Shared Goal Commitment": "sharedGoalCommitment",
+        "Trust and Psychological Safety": "trustAndPsychologicalSafety"
+    }
+
+    # Map dimensions to snake_case
+    dimensions = {dimensions_map[key]: raw_dimensions[key] for key in raw_dimensions if key in dimensions_map}
+
     # Initialize DynamoDB resource
     table = dynamodb.Table(table_name)
 
@@ -496,7 +520,8 @@ def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cach
                     user_highlights = :user_highlights, 
                     word_count = :word_count_data,
                     speaker_time = :speaker_time,
-                    speaker_rate = :speaker_rate
+                    speaker_rate = :speaker_rate,
+                    dimensions = :dimensions
             """,
             ExpressionAttributeValues={
                 ':dialogue': mapped_res,
@@ -505,7 +530,8 @@ def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cach
                 ':user_highlights': user_highlights,
                 ":word_count_data": word_count_data,
                 ":speaker_time": speaker_time,
-                ":speaker_rate": speaker_rate
+                ":speaker_rate": speaker_rate,
+                ":dimensions": dimensions  # Use snake_case keys
             }
         )
         logging.info(f"dialogue, summary, team_highlights & user_highlights saved to ddb: {res}")
@@ -513,7 +539,7 @@ def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cach
         logging.error(f"Failed to update DynamoDB table for meeting_id {meeting_id}: {e}")
         return None
     
-    return res_path
+    return unique_speakers
 
 
 # upload csv files for rppg model 
@@ -603,8 +629,39 @@ def upload_csv_to_dynamodb(file_path, meeting_id, result_type):
             UpdateExpression=f"SET {result_type} = :result",
             ExpressionAttributeValues={f':result': concat_res}
         )
+        
         logging.info(f"{result_type} data uploaded successfully.")
     except Exception as e:
+        logging.error(f"An error occurred: {e}")
+
+def upload_participation_emotion(a_results_file_path, v_results_file_path, user_list, meeting_id):
+    try:
+        # Read the CSV file using pandas
+        a_results_raw = pd.read_csv(a_results_file_path)
+        v_results_raw = pd.read_csv(v_results_file_path)
+        
+        #  Convert the data to a array of arrays of floats [[1,2,3],[4,5,6]]
+        a_result = a_results_raw.values.tolist()
+        v_result = v_results_raw.values.tolist()
+        
+        posNegRates = get_positive_and_negative(a_result, v_result, user_list, meeting_id)
+        
+        print("pos_neg_rates_out")
+        print(posNegRates)
+        # Initialize DynamoDB resource
+        table = dynamodb.Table(table_name)
+        
+        # Update the item in the DynamoDB table
+        table.update_item(
+            Key={'id': meeting_id},
+            UpdateExpression=f"SET posNegRates = :post_neg_rates",
+            ExpressionAttributeValues={f':post_neg_rates': posNegRates})
+        
+        logging.info(f"pos_neg_rates uploaded to DDB successfully.")
+        
+        return posNegRates
+    except Exception as e:
+        print(e)
         logging.error(f"An error occurred: {e}")
 
 def convert_to_native_types(data):
