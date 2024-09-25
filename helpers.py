@@ -23,6 +23,7 @@ from services.gpt import GptServiceImpl
 from services.heatmap import va_heatmap
 from services.nlp import word_count, calculate_speaker_time, calculate_speaker_rate_in_chunks, get_pie_and_bar, get_radar_components
 from services.pea import get_positive_and_negative
+from services.scores import get_scores
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -663,6 +664,48 @@ def upload_participation_emotion(a_results_file_path, v_results_file_path, user_
     except Exception as e:
         print(e)
         logging.error(f"An error occurred: {e}")
+
+def upload_scores(meeting_id, rppg_results_path='./data/rppg_results.csv', a_results_file_path='./data/a_results.csv', v_results_file_path='./data/v_results.csv'):
+    try:
+        # Read the CSV file using pandas
+        rppg_results_raw = pd.read_csv(rppg_results_path)
+        a_results_raw = pd.read_csv(a_results_file_path)
+        v_results_raw = pd.read_csv(v_results_file_path)
+        
+        #  Convert the data to a array of arrays of floats [[1,2,3],[4,5,6]]
+        rppg_result = rppg_results_raw.values.tolist()
+        a_result = a_results_raw.values.tolist()
+        v_result = v_results_raw.values.tolist()
+        
+        print("rppg_result")
+        total, body, behavior = get_scores(rppg_result, v_result, a_result)
+        
+        print(total, body, behavior, "scores")
+        # Initialize DynamoDB resource
+        table = dynamodb.Table(table_name)
+        
+        res = table.update_item(
+            Key={'id': meeting_id},
+            UpdateExpression="""
+                SET 
+                    totalScore = :total,
+                    bodyScore = :body,
+                    behaviorScore = :behavior
+            """,
+            ExpressionAttributeValues={
+                ':total': total,
+                ':body': body,
+                ":behavior": behavior 
+            }
+        )
+        
+        logging.info(f"scores uploaded to DDB successfully.")
+        
+        return total, body, behavior
+    except Exception as e:
+        print(e)
+        logging.error(f"An error occurred: {e}")
+
 
 def convert_to_native_types(data):
     """Convert NumPy types to native Python types."""

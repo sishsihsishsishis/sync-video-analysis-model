@@ -51,7 +51,7 @@ if __name__ == '__main__':
                         video_path = f"./raw/{local_cached_filename}.mp4"
                         
                         # Delete the message from the queue
-                        base.delete_message_from_queue(message)
+                        # base.delete_message_from_queue(message)
                     
                         process_start_time = time.time()
                         
@@ -73,10 +73,12 @@ if __name__ == '__main__':
                         logging.info(f"Uploading detected avatars...")
                         helpers.upload_detected_avatars(jpg_files, meeting_id)
                         
-                        helpers.upload_csv_to_dynamodb('./data/a_results.csv', meeting_id, 'a_result')
-                        helpers.upload_csv_to_dynamodb('./data/v_results.csv', meeting_id, 'v_result')
-                        helpers.upload_csv_to_dynamodb('./data/rppg_results.csv', meeting_id, 'rppg_result')
-                        helpers.upload_csv_to_dynamodb('./data/anchor_results.csv', meeting_id, 'anchor_result')
+                        # Commented out uploads are not needed for now. It unneccessarily increases size of DDB records
+                        # helpers.upload_csv_to_dynamodb('./data/a_results.csv', meeting_id, 'a_result')
+                        # helpers.upload_csv_to_dynamodb('./data/v_results.csv', meeting_id, 'v_result')
+                        # helpers.upload_csv_to_dynamodb('./data/rppg_results.csv', meeting_id, 'rppg_result')
+                        # helpers.upload_csv_to_dynamodb('./data/anchor_results.csv', meeting_id, 'anchor_result')
+                        helpers.upload_scores(meeting_id)
                         
                         # process and save heatmap
                         helpers.process_heatmap(meeting_id)
