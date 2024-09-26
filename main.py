@@ -78,7 +78,8 @@ if __name__ == '__main__':
                         # helpers.upload_csv_to_dynamodb('./data/v_results.csv', meeting_id, 'v_result')
                         # helpers.upload_csv_to_dynamodb('./data/rppg_results.csv', meeting_id, 'rppg_result')
                         # helpers.upload_csv_to_dynamodb('./data/anchor_results.csv', meeting_id, 'anchor_result')
-                        helpers.upload_scores(meeting_id)
+                        scores = helpers.upload_scores(meeting_id)
+                        helpers.update_team_avg_scores("1f593325-a0e2-43d3-a50f-da6bef7c39e2", scores)
                         
                         # process and save heatmap
                         helpers.process_heatmap(meeting_id)

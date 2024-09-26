@@ -19,6 +19,7 @@ import whisper
 from moviepy.editor import VideoFileClip
 import json
 import hashlib
+from boto3.dynamodb.conditions import Key
 from services.gpt import GptServiceImpl
 from services.heatmap import va_heatmap
 from services.nlp import word_count, calculate_speaker_time, calculate_speaker_rate_in_chunks, get_pie_and_bar, get_radar_components
@@ -677,10 +678,9 @@ def upload_scores(meeting_id, rppg_results_path='./data/rppg_results.csv', a_res
         a_result = a_results_raw.values.tolist()
         v_result = v_results_raw.values.tolist()
         
-        print("rppg_result")
-        total, body, behavior = get_scores(rppg_result, v_result, a_result)
+        scores = get_scores(rppg_result, v_result, a_result)
         
-        print(total, body, behavior, "scores")
+        logging.info(f"scores: {scores['total']}, {scores['body']}, {scores['behavior']}")
         # Initialize DynamoDB resource
         table = dynamodb.Table(table_name)
         
@@ -693,17 +693,16 @@ def upload_scores(meeting_id, rppg_results_path='./data/rppg_results.csv', a_res
                     behaviorScore = :behavior
             """,
             ExpressionAttributeValues={
-                ':total': total,
-                ':body': body,
-                ":behavior": behavior 
+                ':total': scores["total"],
+                ':body': scores["body"],
+                ":behavior": scores["behavior"]
             }
         )
         
         logging.info(f"scores uploaded to DDB successfully.")
         
-        return total, body, behavior
+        return scores
     except Exception as e:
-        print(e)
         logging.error(f"An error occurred: {e}")
 
 
@@ -758,6 +757,85 @@ def process_heatmap(meeting_id, a_result_path='./data/a_results.csv', v_result_p
         )
 
         logging.info("Heatmap data uploaded successfully.")
-
+    
     except Exception as e:
         logging.error(f"An error occurred: {e}")
+        logging.error(traceback.format_exc())
+        
+# Recalculate the team average scores
+def recalculate_team_avg_scores(new_scores, prev_avg=None, count=1):
+    try:
+        if prev_avg is None:
+            prev_avg = {'brain': 0, 'body': 0, 'behavior': 0, 'total': 0}
+        
+        updated_avg = {}
+        for key in prev_avg:
+            updated_avg[key] = (prev_avg[key] + new_scores[key]) / (count + 1)
+        
+        return updated_avg
+    
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
+        logging.error(traceback.format_exc())
+        
+# Update the team average scores
+def update_team_avg_scores(team_id, new_scores):
+    meetingTable = dynamodb.Table('MeetingTable')
+    teamTable = dynamodb.Table('TeamTable')
+
+    try:
+        # Query the existing meetings for the team
+        response = meetingTable.query(
+            IndexName='teamId-id-index',
+            KeyConditionExpression=Key('teamId').eq(team_id),
+            ProjectionExpression='id, brainScore, bodyScore, behaviorScore, totalScore'
+        )
+
+        # Extract the meetings data
+        meetings = response.get('Items', [])
+        # print("Meetings:", meetings)
+        
+        # Initialize the previous average and count
+        prev_avg = {'brain': 0, 'body': 0, 'behavior': 0, 'total': 0}
+        count = 0
+
+        # Calculate the current average and count from previous meetings
+        for meeting in meetings:
+            # print("Meeting Brain Score:", meeting['brainScore'])
+            # prev_avg['brain'] += float(meeting['brainScore']) if meeting['brainScore'] is not None else 0
+            prev_avg['body'] += float(meeting['bodyScore']) if meeting['bodyScore'] is not None else 0
+            prev_avg['behavior'] += float(meeting['behaviorScore']) if meeting['behaviorScore'] is not None else 0
+            prev_avg['total'] += float(meeting['totalScore']) if meeting['totalScore'] is not None else 0
+            count += 1
+
+        logging.info(f"Previous Average:, {prev_avg}")
+        logging.info(f"Count of Meetings:, {count}")
+
+        # Update the average with the new meeting scores
+        updated_avg = recalculate_team_avg_scores(new_scores, prev_avg, count)
+        logging.info(f"Updated Average:, {updated_avg}")
+        
+        rounded_avg = {key: round(value, 2) for key, value in updated_avg.items()}
+        
+        
+        # Update the average in DynamoDB for the team
+        teamTable.update_item(
+            Key={'id': team_id},
+            UpdateExpression="SET brainScore = :b, bodyScore = :bo, behaviorScore = :be, totalScore = :t",
+            ExpressionAttributeValues={
+                ':b': Decimal(rounded_avg['brain']),
+                ':bo': Decimal(rounded_avg['body']),
+                ':be': Decimal(rounded_avg['behavior']),
+                ':t': Decimal(rounded_avg['total'])
+            }
+        )
+        
+        logging.info(f"DynamoDB udated successfully.")
+        
+        return updated_avg
+    
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
+        logging.error(traceback.format_exc())
+        
+    return None

@@ -111,6 +111,7 @@ def get_pie_and_bar(data, users):
     a_time = []
     a_rate = []
     bar_speakers = []
+    pie_emotions = []
     bar_emotions = []
     total = []
     sentences_array = []
@@ -162,7 +163,15 @@ def get_pie_and_bar(data, users):
         e_keys.append(emotion)
         e_time.append(round(Decimal(emotions_time[index]), 3))
         e_rate.append(round(Decimal(emotions_time[index] / total_time), 3))
-
+        
+    for i, emotion_key in enumerate(e_keys):
+        pie_emotion = {
+            "emotion": e_keys,
+            "emotion_time": emotions_time[i],
+            "emotion_time_rate": e_rate[i]
+        }
+        pie_emotions.append(pie_emotion)
+            
     # Populate action data
     for act, index in acts_ind.items():
         a_keys.append(act)
