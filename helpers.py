@@ -1,25 +1,20 @@
-
-
-import numpy as np
-import speaker
-from base import dynamodb, s3, upload_resource, sqs, on_off_queue_url
-from decimal import Decimal
-from decimal import Decimal, getcontext, Inexact, Rounded
 import re
-
-#============================================================
-import cv2 
 import os 
 import traceback
 import logging
 import shutil
+import json
+import hashlib
+from decimal import Decimal, getcontext, Inexact, Rounded, ROUND_HALF_UP
+import cv2
+import numpy as np
 import pandas as pd
 import torch
 import whisper
 from moviepy.editor import VideoFileClip
-import json
-import hashlib
 from boto3.dynamodb.conditions import Key
+import speaker
+from base import dynamodb, upload_resource, sqs, on_off_queue_url
 from services.gpt import GptServiceImpl
 from services.heatmap import va_heatmap
 from services.nlp import word_count, calculate_speaker_time, calculate_speaker_rate_in_chunks, get_pie_and_bar, get_radar_components
@@ -395,11 +390,11 @@ def save_emotion_results(emotion_labels, speaker_diarization, meeting_id, output
     # logging.info(item)
     
     logging.info(f"Saving emotion to DDB... {meeting_id}")
-    table.update_item(
-        Key={'id': meeting_id},
-        UpdateExpression="SET emotionText = :emotionText",
-        ExpressionAttributeValues={':emotionText': mapped_res}
-    )
+    # table.update_item(
+    #     Key={'id': meeting_id},
+    #     UpdateExpression="SET emotionText = :emotionText",
+    #     ExpressionAttributeValues={':emotionText': mapped_res}
+    # )
     
     return emotion_res_path
 
@@ -516,7 +511,6 @@ def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cach
             Key={'id': meeting_id},
             UpdateExpression="""
                 SET 
-                    dialogue = :dialogue,
                     summary = :summary,
                     team_highlights = :team_highlights,
                     user_highlights = :user_highlights, 
@@ -526,7 +520,6 @@ def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cach
                     dimensions = :dimensions
             """,
             ExpressionAttributeValues={
-                ':dialogue': mapped_res,
                 ':summary': summary,
                 ':team_highlights': team_highlights,
                 ':user_highlights': user_highlights,
@@ -769,15 +762,19 @@ def recalculate_team_avg_scores(new_scores, prev_avg=None, count=1):
             prev_avg = {'brain': 0, 'body': 0, 'behavior': 0, 'total': 0}
         
         updated_avg = {}
+        
         for key in prev_avg:
-            updated_avg[key] = (prev_avg[key] + new_scores[key]) / (count + 1)
+            updated_value = (prev_avg[key] + new_scores[key]) / (count + 1)
+            # Round to 2 decimal places
+            updated_avg[key] = Decimal(updated_value).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         
         return updated_avg
     
     except Exception as e:
         logging.error(f"An error occurred: {e}")
         logging.error(traceback.format_exc())
-        
+        return None
+    
 # Update the team average scores
 def update_team_avg_scores(team_id, new_scores):
     meetingTable = dynamodb.Table('MeetingTable')
@@ -815,7 +812,8 @@ def update_team_avg_scores(team_id, new_scores):
         updated_avg = recalculate_team_avg_scores(new_scores, prev_avg, count)
         logging.info(f"Updated Average:, {updated_avg}")
         
-        rounded_avg = {key: round(value, 2) for key, value in updated_avg.items()}
+        # Quantize and round the decimals to two places using ROUND_HALF_UP
+        rounded_avg = {key: Decimal(value).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) for key, value in updated_avg.items()}
         
         
         # Update the average in DynamoDB for the team

@@ -1,9 +1,17 @@
 import logging
 import math
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def safe_decimal(value):
+    try:
+        if math.isnan(value):  # check for NaN
+            return Decimal('0')
+        return Decimal(str(value))
+    except (ValueError, InvalidOperation):
+        return Decimal('0')
 
 def get_positive_and_negative(listA, listV, user_list, meeting_id):
     try:
@@ -48,8 +56,9 @@ def get_positive_and_negative(listA, listV, user_list, meeting_id):
                                 positive_count_v += 1
                                 total_pos_cnt_v += 1
                     except (IndexError, TypeError) as e:
+                        error = e
                         # Handle potential index errors or type issues in listV
-                        logging.error(f"Error processing listV for user {user}: {e}")
+                        # logging.error(f"Error processing listV for user {user}: {e}")
                         
                 # Calculate positive and negative rates for listA
                 positive_rate_a = positive_count_a / total_count_a if total_count_a != 0 else float('nan')
@@ -63,10 +72,10 @@ def get_positive_and_negative(listA, listV, user_list, meeting_id):
                 pos_neg_rates.append(
                     {
                         'user': user,
-                        'positive_rate_a': Decimal(str(positive_rate_a)),
-                        'negative_rate_a': Decimal(str(negative_rate_a)),
-                        'positive_rate_v': Decimal(str(positive_rate_v)),
-                        'negative_rate_v': Decimal(str(negative_rate_v))
+                        'positive_rate_a': safe_decimal(positive_rate_a),
+                        'negative_rate_a': safe_decimal(negative_rate_a),
+                        'positive_rate_v': safe_decimal(positive_rate_v),
+                        'negative_rate_v': safe_decimal(negative_rate_v)
                     }
                 )
                 # Update total_rate for both A and V
