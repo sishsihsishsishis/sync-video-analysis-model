@@ -36,8 +36,8 @@ def word_count(nlp_data, chunk_size=30):
     return word_count
 
 def calculate_speaker_time(nlp_data):
-    # Create a dictionary to store the total speaking time for each speaker
     speaker_time = {}
+    total_speaking_time = Decimal('0')
 
     for entry in nlp_data:
         start_time = float(entry['start'])
@@ -53,11 +53,84 @@ def calculate_speaker_time(nlp_data):
         else:
             speaker_time[speaker] = Decimal(str(duration))
 
-    return speaker_time
+        # Update the speaking time
+        total_speaking_time += Decimal(str(duration))
+    
+    # Calculate participation for each speaker
+    participation = {
+        speaker: (time / total_speaking_time * 100).quantize(Decimal('0.00'))
+        for speaker, time in speaker_time.items()
+    }
+
+    return speaker_time, total_speaking_time, participation
+
+def calculate_speaker_wpm(nlp_data):
+    """
+    Calculate words per minute for all speakers in a conversation and maintain running averages.
+    
+    Args:
+        nlp_data (list): List of dictionaries containing conversation metadata with keys:
+            - speaker: speaker identifier
+            - start: start time in seconds
+            - end: end time in seconds
+            - sentence: the spoken text
+            
+    Returns:
+        dict: Dictionary with speaker IDs and their average WPM
+    """
+    # Dictionary to store speaker statistics
+    speaker_stats = {}
+    
+    def update_speaker_stats(speaker_id, words, duration):
+        """Helper function to update speaker statistics"""
+        if speaker_id not in speaker_stats:
+            speaker_stats[speaker_id] = {
+                'total_words': words,
+                'total_duration_minutes': duration,
+                'utterance_count': 1,
+                'current_avg_wpm': 0
+            }
+        else:
+            speaker_stats[speaker_id]['total_words'] += words
+            speaker_stats[speaker_id]['total_duration_minutes'] += duration
+            speaker_stats[speaker_id]['utterance_count'] += 1
+        
+        # Calculate average WPM
+        stats = speaker_stats[speaker_id]
+        if stats['total_duration_minutes'] > 0:
+            stats['current_avg_wpm'] = stats['total_words'] / stats['total_duration_minutes']
+    
+    # Process each utterance
+    for utterance in nlp_data:
+        # Extract data from utterance
+        speaker = utterance['speaker']
+        duration_minutes = (float(utterance['end']) - float(utterance['start'])) / 60
+        # print("start:", float(utterance['start']), "end:", float(utterance['end']))
+        utterance_words = len(utterance['sentence'].split())
+        
+        # Update statistics for this speaker
+        update_speaker_stats(speaker, utterance_words, duration_minutes)
+        
+        # Print current WPM stats for all speakers
+        # print("\nCurrent WPM Statistics:")
+        # print("-" * 50)
+        # for spk, stats in speaker_stats.items():
+        #     print(f"Speaker {spk}: {stats['current_avg_wpm']:.2f} WPM")
+    
+    print("speaker_stats", speaker_stats)
+    # Create final dictionary with just speaker IDs and their average WPM
+    final_wpm_dict = {
+        speaker: stats['current_avg_wpm']
+        for speaker, stats in speaker_stats.items()
+    }
+    print("fnal", final_wpm_dict)
+    return final_wpm_dict
 
 def calculate_speaker_rate_in_chunks(nlp_data, chunk_size=30):
     # Create a dictionary to store the word rates for each speaker in each time slot
+    print("nlp_data", nlp_data)
     word_rates = {}
+    average_rates = {}
 
     for entry in nlp_data:
         start_time = float(entry['start'])
@@ -74,10 +147,11 @@ def calculate_speaker_rate_in_chunks(nlp_data, chunk_size=30):
         while current_time < end_time:
             next_chunk_end = min(current_time + chunk_size, end_time)
             duration = next_chunk_end - current_time
-            
+            print(next_chunk_end, duration)
             if duration > 0:  # Avoid division by zero
                 # Calculate the proportional number of words for the current chunk
                 chunk_word_count = int(num_words * (duration / (end_time - start_time)))
+                
                 rate = chunk_word_count / duration  # Words per second for the chunk
             else:
                 rate = 0
@@ -96,7 +170,17 @@ def calculate_speaker_rate_in_chunks(nlp_data, chunk_size=30):
             # Move to the next chunk
             current_time += chunk_size
 
-    return word_rates
+    # Calculate the average rate for each speaker based on word_rates
+    for speaker, time_slots in word_rates.items():
+        total_rate = sum(time_slots.values())
+        num_slots = len(time_slots)
+        if num_slots > 0:
+            average_rate = total_rate / num_slots
+        else:
+            average_rate = 0
+        average_rates[speaker] = average_rate
+
+    return word_rates, average_rates
 
 def get_pie_and_bar(data, users):
     

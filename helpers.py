@@ -17,7 +17,7 @@ import speaker
 from base import dynamodb, upload_resource, sqs, on_off_queue_url
 from services.gpt import GptServiceImpl
 from services.heatmap import va_heatmap
-from services.nlp import word_count, calculate_speaker_time, calculate_speaker_rate_in_chunks, get_pie_and_bar, get_radar_components
+from services.nlp import word_count, calculate_speaker_time, calculate_speaker_rate_in_chunks, calculate_speaker_wpm, get_pie_and_bar, get_radar_components
 from services.pea import get_positive_and_negative
 from services.scores import get_scores
 
@@ -470,13 +470,44 @@ def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cach
     
     # GET WORD COUNT 
     word_count_data = word_count(mapped_res)
-    speaker_time = calculate_speaker_time(mapped_res)
-    speaker_rate = calculate_speaker_rate_in_chunks(mapped_res)
-    
+    speaker_time_raw, total_speaking_time, participation_raw = calculate_speaker_time(mapped_res)
+    # speaker_rate_chunks_raw, speaker_rate_raw  = calculate_speaker_wpm(mapped_res)
+    final_wpm = calculate_speaker_wpm(mapped_res)
+    # print("\nFinal Average WPM by Speaker:")
+    # print("-" * 50)
+    # for speaker_, wpm in final_wpm.items():
+    #     print(f"Speaker {speaker_}: {wpm:.2f} WPM")
     word_count_data = {k: {str(ks): Decimal(str(vs)) for ks, vs in v.items()} for k, v in word_count_data.items()}
-    speaker_time = {k: Decimal(str(v)) for k, v in speaker_time.items()}
-    speaker_rate = {k: {str(ks): Decimal(str(vs)) for ks, vs in v.items()} for k, v in speaker_rate.items()}
     
+    speaker_rate = [
+        {
+            "speakerId": k,
+            "rate": Decimal(str(v))
+        }
+        for k, v in final_wpm.items()
+    ]
+    speaker_time = [
+        {
+            "speakerId": k,
+            "time": Decimal(str(v))
+        }
+        for k, v in speaker_time_raw.items()
+    ]
+    participation = [
+        {
+            "speakerId": k,
+            "time": Decimal(str(v))
+        }
+        for k, v in participation_raw.items()
+    ]
+    # speaker_rate_chunks = [
+    #     {
+    #         "speakerId": k,
+    #         "chunks": [{"time": int(ks), "rate": Decimal(str(vs))} for ks, vs in v.items()]
+    #     }
+    #     for k, v in speaker_rate_chunks_raw.items()
+    # ]
+        
     # Extract unique speakers from mapped_res
     unique_speakers = list({segment["speaker"] for segment in mapped_res})
     
@@ -512,28 +543,33 @@ def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cach
             UpdateExpression="""
                 SET 
                     summary = :summary,
+                    total_speaking_time = :total_speaking_time,
                     team_highlights = :team_highlights,
                     user_highlights = :user_highlights, 
                     word_count = :word_count_data,
-                    speaker_time = :speaker_time,
-                    speaker_rate = :speaker_rate,
+                    participation = :participation,
+                    speaker_times = :speaker_times,
+                    speaker_rates = :speaker_rates,
                     dimensions = :dimensions
             """,
             ExpressionAttributeValues={
                 ':summary': summary,
                 ':team_highlights': team_highlights,
                 ':user_highlights': user_highlights,
-                ":word_count_data": word_count_data,
-                ":speaker_time": speaker_time,
-                ":speaker_rate": speaker_rate,
-                ":dimensions": dimensions  # Use snake_case keys
+                ':word_count_data': word_count_data,
+                ':total_speaking_time': total_speaking_time,
+                ':speaker_times': speaker_time,
+                ':participation': participation,
+                ':speaker_rates': speaker_rate,
+                ':dimensions': dimensions  # Use snake_case keys
             }
         )
         logging.info(f"dialogue, summary, team_highlights & user_highlights saved to ddb: {res}")
     except Exception as e:
         logging.error(f"Failed to update DynamoDB table for meeting_id {meeting_id}: {e}")
+        logging.error(traceback.format_exc())
         return None
-    
+
     return unique_speakers
 
 

@@ -35,6 +35,9 @@ if __name__ == '__main__':
                     try:
                         logging.info('Received message: %s', message['Body'])
                         
+                        # Delete the message from the queue
+                        base.delete_message_from_queue(message)
+                    
                         # Reset cache
                         logging.info("Resetting cache...")
                         if os.path.exists(cache_dir):
@@ -49,10 +52,6 @@ if __name__ == '__main__':
                         logging.info(f"Downloading resource from S3: {download_url}")
                         local_cached_filename = base.download_video(download_url, './raw')
                         video_path = f"./raw/{local_cached_filename}.mp4"
-                        
-                        # Delete the message from the queue
-                        base.delete_message_from_queue(message)
-                    
                         process_start_time = time.time()
                         
                         # Change FPS

@@ -5,8 +5,8 @@ if __name__ == '__main__':
     # Define the message parameters
     message = {
         "bucket": "syneurgy-prod",
-        "key": "meetings/3bd3606f-78b1-4892-a608-fd04c80ea98b/Syneurgy - X Team Tuesday - platform and readiness timeline - 20 August 2024.mp4",
-        "meetingId": "3bd3606f-78b1-4892-a608-fd04c80ea98b",
+        "key": "meetings/e04e044c-278e-4da6-ac7c-b4cbdf75bd6e/gitlab2_meeting_video_3.mp4",
+        "meetingId": "e04e044c-278e-4da6-ac7c-b4cbdf75bd6e",
         "type": "analysis"
     }
 
