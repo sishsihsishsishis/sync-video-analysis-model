@@ -811,7 +811,6 @@ def recalculate_team_avg_scores(new_scores, prev_avg=None, count=1):
         logging.error(traceback.format_exc())
         return None
     
-# Update the team average scores
 def update_team_avg_scores(team_id, new_scores):
     meetingTable = dynamodb.Table('MeetingTable')
     teamTable = dynamodb.Table('TeamTable')
@@ -826,7 +825,6 @@ def update_team_avg_scores(team_id, new_scores):
 
         # Extract the meetings data
         meetings = response.get('Items', [])
-        # print("Meetings:", meetings)
         
         # Initialize the previous average and count
         prev_avg = {'brain': 0, 'body': 0, 'behavior': 0, 'total': 0}
@@ -834,11 +832,10 @@ def update_team_avg_scores(team_id, new_scores):
 
         # Calculate the current average and count from previous meetings
         for meeting in meetings:
-            # print("Meeting Brain Score:", meeting['brainScore'])
-            # prev_avg['brain'] += float(meeting['brainScore']) if meeting['brainScore'] is not None else 0
-            prev_avg['body'] += float(meeting['bodyScore']) if meeting['bodyScore'] is not None else 0
-            prev_avg['behavior'] += float(meeting['behaviorScore']) if meeting['behaviorScore'] is not None else 0
-            prev_avg['total'] += float(meeting['totalScore']) if meeting['totalScore'] is not None else 0
+            prev_avg['brain'] += float(meeting.get('brainScore', 0)) if meeting.get('brainScore') is not None else 0
+            prev_avg['body'] += float(meeting.get('bodyScore', 0)) if meeting.get('bodyScore') is not None else 0
+            prev_avg['behavior'] += float(meeting.get('behaviorScore', 0)) if meeting.get('behaviorScore') is not None else 0
+            prev_avg['total'] += float(meeting.get('totalScore', 0)) if meeting.get('totalScore') is not None else 0
             count += 1
 
         logging.info(f"Previous Average:, {prev_avg}")
@@ -851,20 +848,43 @@ def update_team_avg_scores(team_id, new_scores):
         # Quantize and round the decimals to two places using ROUND_HALF_UP
         rounded_avg = {key: Decimal(value).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) for key, value in updated_avg.items()}
         
+        # Divide prev_avg by count to get the average if count is greater than 0
+        if count > 0:
+            prev_avg = {key: (value / count) for key, value in prev_avg.items()}
+
+        # Quantize and round the decimals to two places using ROUND_HALF_UP
+        rounded_prev_avg = {key: Decimal(value).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) for key, value in prev_avg.items()}
+
+        # Calculate the difference between updated and previous averages
+        diff_avg = {
+            key: Decimal(rounded_avg[key] - rounded_prev_avg[key]).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) 
+            for key in rounded_avg
+        }
         
-        # Update the average in DynamoDB for the team
+        # Ensure negative values have a negative sign
+        diff_avg = {key: (value if value >= 0 else Decimal(f"-{abs(value)}")).quantize(Decimal('0.01')) for key, value in diff_avg.items()}
+        
+        # Update the current, previous, and difference average in DynamoDB for the team
         teamTable.update_item(
             Key={'id': team_id},
-            UpdateExpression="SET brainScore = :b, bodyScore = :bo, behaviorScore = :be, totalScore = :t",
+            UpdateExpression="SET brainScore = :b, bodyScore = :bo, behaviorScore = :be, totalScore = :t, prevBrainScore = :pb, prevBodyScore = :pbo, prevBehaviorScore = :pbe, prevTotalScore = :pt, diffBrainScore = :db, diffBodyScore = :dbo, diffBehaviorScore = :dbe, diffTotalScore = :dt",
             ExpressionAttributeValues={
                 ':b': Decimal(rounded_avg['brain']),
                 ':bo': Decimal(rounded_avg['body']),
                 ':be': Decimal(rounded_avg['behavior']),
-                ':t': Decimal(rounded_avg['total'])
+                ':t': Decimal(rounded_avg['total']),
+                ':pb': Decimal(rounded_prev_avg['brain']),
+                ':pbo': Decimal(rounded_prev_avg['body']),
+                ':pbe': Decimal(rounded_prev_avg['behavior']),
+                ':pt': Decimal(rounded_prev_avg['total']),
+                ':db': Decimal(diff_avg['brain']),
+                ':dbo': Decimal(diff_avg['body']),
+                ':dbe': Decimal(diff_avg['behavior']),
+                ':dt': Decimal(diff_avg['total'])
             }
         )
         
-        logging.info(f"DynamoDB udated successfully.")
+        logging.info(f"DynamoDB updated successfully.")
         
         return updated_avg
     
