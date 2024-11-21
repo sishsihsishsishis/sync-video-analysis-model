@@ -112,6 +112,41 @@ class GptServiceImpl:
 
         return nlp_ai_summary, team_highlights, user_highlights
 
+    def analyze_transcript_emotions(self, transcript_data):
+        prompt_str = transcript_data
+        prompt = """
+        You will be provided with a transcript formatted as:
+        Speaker\tStart\tEnd\tSentence\tDialogueAct\tEmotion
+
+        Task:
+        1. Analyze each sentence and determine its sentiment (positive, negative, neutral).
+        2. Calculate the overall percentage of positive, negative, and neutral emotions in the entire transcript.
+        3. Calculate the KPIs (engagement, alignment, agency, stress, burnout) based on the transcript, with each value ranging between 30 and 70. The KPIs should be calculated based on the transcript, not the emotion provided alongside the sentence. And don't hard code 30 or 70, but calculate them based on the transcript. It needs to feel dynamic. 
+
+        **Important Instructions:**
+        - Do not focus on the emotion provided alongside the sentence, as it is incorrect. Analyse the sentence and mark it as positive, negative, or neutral based on the sentence. This is strict instruction. Also make sure the last percentage is not 0 in any of the percentages (atleast keep 5-15% in each but total should always be 100%).
+        - Always return the output in strict JSON format as a string. This is super important or parsing will fail.
+        - Do not include any additional text, explanations, or comments.
+        - If there is any issue, still return a valid JSON response indicating the error.
+
+        **Output Format (JSON):**
+        {
+          "positive_percentage": "Positive Emotion Percentage",
+          "negative_percentage": "Negative Emotion Percentage",
+          "neutral_percentage": "Neutral Emotion Percentage",
+          "kpis": {
+            "engagement": "Value between 30 and 70",
+            "alignment": "Value between 30 and 70",
+            "agency": "Value between 30 and 70",
+            "stress": "Value between 30 and 70",
+            "burnout": "Value between 30 and 70"
+          }
+        }
+        """
+        logging.info("Analyzing transcript emotions...")
+        response = self.send_message_to_gpt(prompt_str, prompt)
+        return json.dumps(response) if isinstance(response, dict) else response
+
     @retry(stop_max_attempt_number=MAX_RETRIES, wait_fixed=1000)
     def process_contents(self, prompt_str):
         prompt = self.GENERAL_PROMPT.format(

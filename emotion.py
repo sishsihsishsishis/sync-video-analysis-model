@@ -89,8 +89,8 @@ def get_inference_data(datas, tokenizer, speaker_vocab_dict_path):
         utterance = speaker + " says:, " + utterance
         speaker = speaker.lower()
         
-        logging.info(f"Processing sentence: {sentence}")
-        logging.info(f"Speaker: {speaker}")
+        # logging.info(f"Processing sentence: {sentence}")
+        # logging.info(f"Speaker: {speaker}")
 
         speaker_id = speaker_vocab.word2index(speaker)
         token_ids = tokenizer(utterance, add_special_tokens=False)["input_ids"] + [

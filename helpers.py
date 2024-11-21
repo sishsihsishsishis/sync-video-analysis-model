@@ -20,6 +20,7 @@ from services.heatmap import va_heatmap
 from services.nlp import word_count, calculate_speaker_time, calculate_speaker_rate_in_chunks, calculate_speaker_wpm, get_pie_and_bar, get_radar_components
 from services.pea import get_positive_and_negative
 from services.scores import get_scores
+import uuid
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -33,15 +34,6 @@ def float_to_decimal(f):
 
 
 def send_message_to_sqs(object_key, meeting_id, message_type, bucket_name='syneurgy-prod', queue_url=on_off_queue_url):
-    """
-    Send a message to an SQS queue.
-
-    :param bucket_name: Name of the S3 bucket
-    :param object_key: Key of the S3 object
-    :param meeting_id: ID of the meeting
-    :param message_type: Type of the message
-    :param queue_url: URL of the SQS queue
-    """
     try:
         logging.info(f"sending message to sqs...")
         # Construct the message body
@@ -57,7 +49,7 @@ def send_message_to_sqs(object_key, meeting_id, message_type, bucket_name='syneu
             QueueUrl=queue_url,
             MessageBody=json.dumps(message_body),
             MessageGroupId=message_type,
-            MessageDeduplicationId=hashlib.md5(f'{message_type}-{meeting_id}'.encode()).hexdigest()
+            MessageDeduplicationId=str(uuid.uuid4())
             
         )
         logging.info(response)
@@ -380,6 +372,9 @@ def save_emotion_results(emotion_labels, speaker_diarization, meeting_id, output
         }
         for segment in emotion_res
     ]
+    
+    
+    
     # Initialize DynamoDB resource
     table = dynamodb.Table(table_name)
 
@@ -468,6 +463,26 @@ def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cach
     gpt_service = GptServiceImpl()
     summary, team_highlights, user_highlights = gpt_service.summary_nlp(mapped_res)
     
+    emotions = gpt_service.analyze_transcript_emotions(str(mapped_res))
+    # Parse the result to ensure it's a JSON object
+    emotions_data = json.loads(emotions)
+
+    # Convert percentages to whole numbers as strings or integers
+    emotions_safe = {
+        "positive": str(int(float(emotions_data['positive_percentage'].replace('%', '')))),
+        "negative": str(int(float(emotions_data['negative_percentage'].replace('%', '')))),
+        "neutral": str(int(float(emotions_data['neutral_percentage'].replace('%', ''))))
+    }
+
+    # Convert KPIs to whole numbers as Decimals to be DynamoDB compatible
+    kpis_safe = {
+        "engagement": Decimal(str(emotions_data['kpis']['engagement'])),
+        "alignment": Decimal(str(emotions_data['kpis']['alignment'])),
+        "agency": Decimal(str(emotions_data['kpis']['agency'])),
+        "stress": Decimal(str(emotions_data['kpis']['stress'])),
+        "burnout": Decimal(str(emotions_data['kpis']['burnout']))
+    }
+    
     # GET WORD COUNT 
     word_count_data = word_count(mapped_res)
     speaker_time_raw, total_speaking_time, participation_raw = calculate_speaker_time(mapped_res)
@@ -521,17 +536,35 @@ def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cach
     
     # Prepare dimensions for DynamoDB (snake_case)
     raw_dimensions = {key: Decimal(str(value)) for key, value in zip(r_keys, radar_chart_list)}
+
     dimensions_map = {
-        "Absorption or Task Engagement": "absorptionOrTaskEngagement",
+        "Absorption or Task Engagement": "absorption_or_task_engagement",
         "Enjoyment": "enjoyment",
-        "Equal Participation": "equalParticipation",
-        "Shared Goal Commitment": "sharedGoalCommitment",
-        "Trust and Psychological Safety": "trustAndPsychologicalSafety"
+        "Equal Participation": "equal_participation",
+        "Shared Goal Commitment": "shared_goal_commitment",
+        "Trust and Psychological Safety": "trust_and_psychological_safety"
     }
 
-    # Map dimensions to snake_case
-    dimensions = {dimensions_map[key]: raw_dimensions[key] for key in raw_dimensions if key in dimensions_map}
-
+    # Map dimensions to snake_case and prepare for DynamoDB
+    dimensions = {
+        dimensions_map[key]: raw_dimensions[key]
+        for key in raw_dimensions if key in dimensions_map
+    }
+    
+    update_team_avg_kpis_and_emotions(meeting_id,
+    {
+        'positive': float(emotions_safe['positive']),
+        'negative': float(emotions_safe['negative']),
+        'neutral': float(emotions_safe['neutral'])
+    },
+    {
+        'engagement': float(kpis_safe['engagement']),
+        'alignment': float(kpis_safe['alignment']),
+        'agency': float(kpis_safe['agency']),
+        'stress': float(kpis_safe['stress']),
+        'burnout': float(kpis_safe['burnout'])
+    })
+    
     # Initialize DynamoDB resource
     table = dynamodb.Table(table_name)
 
@@ -550,7 +583,9 @@ def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cach
                     participation = :participation,
                     speaker_times = :speaker_times,
                     speaker_rates = :speaker_rates,
-                    dimensions = :dimensions
+                    dimensions = :dimensions,
+                    emotions = :em,
+                    kpis = :kpis
             """,
             ExpressionAttributeValues={
                 ':summary': summary,
@@ -561,7 +596,9 @@ def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cach
                 ':speaker_times': speaker_time,
                 ':participation': participation,
                 ':speaker_rates': speaker_rate,
-                ':dimensions': dimensions  # Use snake_case keys
+                ':dimensions': dimensions,
+                ':em': emotions_safe,
+                ':kpis': kpis_safe
             }
         )
         logging.info(f"dialogue, summary, team_highlights & user_highlights saved to ddb: {res}")
@@ -893,3 +930,170 @@ def update_team_avg_scores(team_id, new_scores):
         logging.error(traceback.format_exc())
         
     return None
+def update_team_avg_kpis_and_emotions(meeting_id, new_emotions, new_kpis):
+    meetingTable = dynamodb.Table('MeetingTable')
+    teamTable = dynamodb.Table('TeamTable')
+
+    try:
+        # Get the meeting by meetingId to retrieve the teamId
+        meeting_response = meetingTable.get_item(
+            Key={'id': meeting_id},
+            ProjectionExpression='teamId'
+        )
+
+        if 'Item' not in meeting_response:
+            logging.error(f"Meeting with ID {meeting_id} not found.")
+            return None
+
+        team_id = meeting_response['Item']['teamId']
+
+        # Query the existing meetings for the team
+        response = meetingTable.query(
+            IndexName='teamId-id-index',
+            KeyConditionExpression=Key('teamId').eq(team_id),
+            ProjectionExpression='id, emotions, kpis'
+        )
+
+        # Extract the meetings data
+        meetings = response.get('Items', [])
+        
+        # Initialize the previous average and count
+        prev_avg = {
+            'engagement': 0, 'alignment': 0, 'agency': 0, 'stress': 0, 'burnout': 0,
+            'positive': 0, 'negative': 0, 'neutral': 0
+        }
+        count = {
+            'engagement': 0, 'alignment': 0, 'agency': 0, 'stress': 0, 'burnout': 0,
+            'positive': 0, 'negative': 0, 'neutral': 0
+        }
+
+        # Calculate the current average and count from previous meetings
+        for meeting in meetings:
+            kpis = meeting.get('kpis', {})
+            emotions = meeting.get('emotions', {})
+            
+            for key in prev_avg.keys():
+                if key in kpis and kpis[key] != 0:
+                    prev_avg[key] += float(kpis[key])
+                    count[key] += 1
+                if key in emotions and emotions[key] != 0:
+                    prev_avg[key] += float(emotions[key])
+                    count[key] += 1
+
+        logging.info(f"Previous Average:, {prev_avg}")
+        logging.info(f"Count of Meetings:, {count}")
+
+        # Calculate the averages, ignoring keys with count 0
+        for key in prev_avg.keys():
+            if count[key] > 0:
+                prev_avg[key] /= count[key]
+
+        # Update the average with the new meeting scores
+        # Separate the new scores for emotions and KPIs
+        new_scores = {**new_emotions, **new_kpis}
+        updated_avg = recalculate_team_avg_scores(new_scores, prev_avg, sum(count.values()))
+        logging.info(f"Updated Average: {updated_avg}")
+        logging.info(f"New Emotions: {new_emotions}")
+        logging.info(f"New KPIs: {new_kpis}")
+        
+        # Quantize and round the decimals to two places using ROUND_HALF_UP
+        rounded_avg = {key: Decimal(value).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) for key, value in updated_avg.items()}
+        
+        # Quantize and round the decimals to two places using ROUND_HALF_UP
+        rounded_prev_avg = {key: Decimal(value).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) for key, value in prev_avg.items()}
+
+        # Calculate the difference between updated and previous averages
+        diff_avg = {
+            key: Decimal(rounded_avg[key] - rounded_prev_avg[key]).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) 
+            for key in rounded_avg
+        }
+        
+        # Ensure negative values have a negative sign
+        diff_avg = {key: (value if value >= 0 else Decimal(f"-{abs(value)}")).quantize(Decimal('0.01')) for key, value in diff_avg.items()}
+        
+        # Update the current, previous, and difference average in DynamoDB for the team
+        teamTable.update_item(
+            Key={'id': team_id},
+            UpdateExpression="""
+                SET kpis = :k, emotions = :e
+            """,
+            ExpressionAttributeValues={
+                ':k': {
+                    'engagement': Decimal(rounded_avg['engagement']),
+                    'alignment': Decimal(rounded_avg['alignment']),
+                    'agency': Decimal(rounded_avg['agency']),
+                    'stress': Decimal(rounded_avg['stress']),
+                    'burnout': Decimal(rounded_avg['burnout']),
+                    'prevEngagement': Decimal(rounded_prev_avg['engagement']),
+                    'prevAlignment': Decimal(rounded_prev_avg['alignment']),
+                    'prevAgency': Decimal(rounded_prev_avg['agency']),
+                    'prevStress': Decimal(rounded_prev_avg['stress']),
+                    'prevBurnout': Decimal(rounded_prev_avg['burnout']),
+                    'diffEngagement': Decimal(diff_avg['engagement']),
+                    'diffAlignment': Decimal(diff_avg['alignment']),
+                    'diffAgency': Decimal(diff_avg['agency']),
+                    'diffStress': Decimal(diff_avg['stress']),
+                    'diffBurnout': Decimal(diff_avg['burnout'])
+                },
+                ':e': {
+                    'positive': Decimal(rounded_avg['positive']),
+                    'negative': Decimal(rounded_avg['negative']),
+                    'neutral': Decimal(rounded_avg['neutral']),
+                    'prevPositive': Decimal(rounded_prev_avg['positive']),
+                    'prevNegative': Decimal(rounded_prev_avg['negative']),
+                    'prevNeutral': Decimal(rounded_prev_avg['neutral']),
+                    'diffPositive': Decimal(diff_avg['positive']),
+                    'diffNegative': Decimal(diff_avg['negative']),
+                    'diffNeutral': Decimal(diff_avg['neutral'])
+                }
+            }
+        )
+        
+        logging.info(f"DynamoDB updated successfully.")
+        
+        return updated_avg
+    
+    except Exception as e:
+        logging.error(f"An error occurred: {e}")
+        logging.error(traceback.format_exc())
+        
+    return None
+
+def update_status(meeting_id, status, table_name='MeetingTable'):
+    try:
+        # Initialize DynamoDB resource
+        table = dynamodb.Table(table_name)
+        
+        # Update the report field in the DynamoDB table
+        table.update_item(
+            Key={'id': meeting_id},
+            UpdateExpression="SET checkpoint = :checkpoint",
+            ExpressionAttributeValues={':checkpoint': status}
+        )
+        logging.info(f"DynamoDB item updated for meeting_id: {meeting_id}, checkpoint: {status}")
+    except Exception as e:
+        logging.error(f"Error updating DynamoDB item: {e}")
+
+def update_errors(meeting_id, error_key, table_name='MeetingTable'):
+    try:
+        # Initialize DynamoDB resource
+        table = dynamodb.Table(table_name)
+
+        # Fetch the existing errors
+        response = table.get_item(Key={'id': meeting_id}, ProjectionExpression='errors')
+        existing_errors = response.get('Item', {}).get('errors', {})
+
+        # Update the errors dictionary
+        if not isinstance(existing_errors, dict):
+            existing_errors = {}
+        existing_errors[error_key] = True
+
+        # Update the report field in the DynamoDB table
+        table.update_item(
+            Key={'id': meeting_id},
+            UpdateExpression="SET errors = :errors",
+            ExpressionAttributeValues={':errors': existing_errors}
+        )
+        logging.info(f"DynamoDB item updated for meeting_id: {meeting_id}, errors: {existing_errors}")
+    except Exception as e:
+        logging.error(f"Error updating DynamoDB item: {e}")
