@@ -57,7 +57,6 @@ def send_message_to_sqs(object_key, meeting_id, message_type, bucket_name='syneu
     except Exception as e:
         logging.info(f'An error occurred: {e}')
 
-
 def change_fps(source_video_path, output_file_path, target_fps=25):
     try:
         data_folder = "data"
@@ -70,6 +69,9 @@ def change_fps(source_video_path, output_file_path, target_fps=25):
             raise ValueError(f"Error opening video file: {source_video_path}")
         
         original_fps = cap.get(cv2.CAP_PROP_FPS)
+        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        duration = frame_count / original_fps 
+        
         if original_fps is None or original_fps == 0:
             raise ValueError(f"Unable to determine FPS for video file: {source_video_path}")
 
@@ -101,7 +103,7 @@ def change_fps(source_video_path, output_file_path, target_fps=25):
         out.release()
         logging.info(f"Video with changed FPS saved to: {output_file_path}")
 
-        return output_file_path
+        return duration
     
     except Exception as e:
         logging.error(f"An error occurred: {e}")

@@ -53,6 +53,7 @@ if __name__ == '__main__':
 
                         try:
                             helpers.update_key(meeting_id, 'started', True)
+                            helpers.update_key(meeting_id, 'queued', False)
                             helpers.update_key(meeting_id, 'start', Decimal(str(start_time)))
                             helpers.update_status(meeting_id, 'extracting')
 
@@ -87,7 +88,9 @@ if __name__ == '__main__':
                             # Change FPS
                             logging.info(f"Resampling video: {local_cached_filename}")
                             resample_path = f"./data/{local_cached_filename}.mp4"
-                            helpers.change_fps(video_path, resample_path, 25)
+                            duration = helpers.change_fps(video_path, resample_path, 25)
+                            helpers.update_key(meeting_id, 'duration', Decimal(str(duration)))
+                            
                         except Exception as e:
                             logging.error(f"Error resampling video for meeting ID {meeting_id}: {e}")
                             helpers.update_errors(meeting_id, 'resampling')
@@ -171,7 +174,8 @@ if __name__ == '__main__':
                             logging.info(f"Uploading NLP text data to S3...")
                             s3_nlp_upload_path = f'out/{meeting_id}/transcript.txt'
                             base.upload_resource(diarization_path, s3_nlp_upload_path)
-                            helpers.send_message_to_sqs(download_url, meeting_id, 'speaker')
+                            # TODO: send message to SQS once we start using speaker model.
+                            # helpers.send_message_to_sqs(download_url, meeting_id, 'speaker')
                         except Exception as e:
                             helpers.update_errors(meeting_id, 'speaker')
                             logging.error(f"Error uploading NLP text data for meeting ID {meeting_id}: {e}")

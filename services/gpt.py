@@ -2,6 +2,7 @@ import logging
 import requests
 from retrying import retry
 import json
+import tiktoken
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -173,12 +174,32 @@ class GptServiceImpl:
         )
         logging.info("Processing user highlight...")
         return self.send_message_to_gpt(prompt_str, prompt)
-
+    
     def send_message_to_gpt(self, content, system_prompt):
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.API_KEY}"
         }
+        
+        encoding = tiktoken.get_encoding("cl100k_base")
+        max_tokens = 16000  # Token limit for GPT-3.5 Turbo 16k
+
+        # Create a combined input (system + user message)
+        combined_content = system_prompt + "\n" + content
+
+        # Tokenize the content and check token count
+        total_tokens = len(encoding.encode(combined_content))
+        logging.info(f"Total tokens: {total_tokens}")
+        
+        if total_tokens > max_tokens:
+            # Trim content if it exceeds the token limit
+            excess_tokens = total_tokens - max_tokens
+            content_tokens = encoding.encode(content)
+            content_tokens = content_tokens[:-excess_tokens]  # Remove excess tokens
+
+            # Decode the trimmed content back into a string
+            content = encoding.decode(content_tokens)
+
         data = {
             "model": "gpt-3.5-turbo-16k",
             "messages": [
@@ -186,6 +207,7 @@ class GptServiceImpl:
                 {"role": "user", "content": content}
             ]
         }
+
         response = requests.post(self.URL, json=data, headers=headers)
         response.raise_for_status()
         

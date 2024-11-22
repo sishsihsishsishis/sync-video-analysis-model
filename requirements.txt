@@ -16,3 +16,4 @@ vocab
 torchvision
 moviepy
 retrying
+tiktoken
