@@ -9,6 +9,7 @@ import base  # basic functions
 import helpers  # helper functions
 import rppg  # model
 import dialogue  # model
+from decimal import Decimal
 from speaker import diarization
 from emotion import go_emotion
 from boto3.dynamodb.conditions import Key
@@ -32,6 +33,7 @@ if __name__ == '__main__':
                 asr_path = "./data/transcription.txt"
                 diarization_path = "./data/diarization.txt"
                 local_cached_filename=""
+                start_time=time.time()
                 # Process received messages
                 for message in messages:
                     try:
@@ -50,6 +52,8 @@ if __name__ == '__main__':
                         meeting_id = body.get('meetingId')
 
                         try:
+                            helpers.update_key(meeting_id, 'started', True)
+                            helpers.update_key(meeting_id, 'start', Decimal(str(start_time)))
                             helpers.update_status(meeting_id, 'extracting')
 
                             # Get TeamID from MeetingTable using meetingId
@@ -168,8 +172,8 @@ if __name__ == '__main__':
                             s3_nlp_upload_path = f'out/{meeting_id}/transcript.txt'
                             base.upload_resource(diarization_path, s3_nlp_upload_path)
                             helpers.send_message_to_sqs(download_url, meeting_id, 'speaker')
-                            helpers.update_errors(meeting_id, 'speaker')
                         except Exception as e:
+                            helpers.update_errors(meeting_id, 'speaker')
                             logging.error(f"Error uploading NLP text data for meeting ID {meeting_id}: {e}")
 
                         try:
@@ -192,12 +196,15 @@ if __name__ == '__main__':
                             dialogue_act_labels = dialogue.go_dialogue_act(text)
                             unique_speakers = helpers.save_dialogue_act_labels(dialogue_act_labels, emotion_texts, meeting_id)
                             helpers.upload_participation_emotion('./data/a_results.csv', './data/v_results.csv', unique_speakers, meeting_id)
-                            helpers.update_errors(meeting_id, 'participation')
                         except Exception as e:
+                            helpers.update_errors(meeting_id, 'participation')
                             logging.error(f"Error running dialogue model for meeting ID {meeting_id}: {e}")
 
                         try:
                             helpers.update_status(meeting_id, 'completed')
+                            helpers.update_key(meeting_id, 'finished', True)
+                            finish_time=time.time()
+                            helpers.update_key(meeting_id, 'finish', Decimal(str(finish_time)))
                         except Exception as e:
                             logging.error(f"Error updating status to 'completed' for meeting ID {meeting_id}: {e}")
                             helpers.update_errors(meeting_id, 'completed')

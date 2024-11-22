@@ -5,8 +5,8 @@ if __name__ == '__main__':
     # Define the message parameters
     message = {
         "bucket": "syneurgy-prod",
-        "key": "meetings/cf57bf9d-3db6-4efe-adff-11dec9294394/no_trust.mp4",
-        "meetingId": "cf57bf9d-3db6-4efe-adff-11dec9294394",
+        "key": "meetings/e5c41a63-611d-4c6e-9d9e-5637fc8bed17/no_trust.mp4",
+        "meetingId": "e5c41a63-611d-4c6e-9d9e-5637fc8bed17",
         "type": "analysis"
     }
 

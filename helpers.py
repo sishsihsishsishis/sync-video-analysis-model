@@ -141,7 +141,6 @@ def extract_audio(video_path, audio_path=None):
 
     except Exception as e:
         logging.error(f"An error occurred while extracting audio: {e}")
-        traceback.logging.info_exc()
         return None
 
 
@@ -1071,6 +1070,22 @@ def update_status(meeting_id, status, table_name='MeetingTable'):
             ExpressionAttributeValues={':checkpoint': status}
         )
         logging.info(f"DynamoDB item updated for meeting_id: {meeting_id}, checkpoint: {status}")
+    except Exception as e:
+        logging.error(f"Error updating DynamoDB item: {e}")
+        
+def update_key(meeting_id, key, status, table_name='MeetingTable'):
+    try:
+        # Initialize DynamoDB table resource
+        table = dynamodb.Table(table_name)
+        
+        # Update the specified key dynamically
+        table.update_item(
+            Key={'id': meeting_id},
+            UpdateExpression="SET #key = :value",
+            ExpressionAttributeNames={'#key': key},  # Map #key to the dynamic key
+            ExpressionAttributeValues={':value': status}  # Set the value dynamically
+        )
+        logging.info(f"DynamoDB item updated for meeting_id: {meeting_id}, key: {key}, status: {status}")
     except Exception as e:
         logging.error(f"Error updating DynamoDB item: {e}")
 
