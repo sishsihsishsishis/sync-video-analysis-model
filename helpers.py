@@ -533,15 +533,15 @@ def save_dialogue_act_labels(dialogue_act_labels, emotion_data, meeting_id, cach
     radar_chart_list = []
     get_radar_components(s_time, total[0], a_time, e_time, sentences_array, radar_chart_list, r_keys, unique_speakers)
     
-    # Prepare dimensions for DynamoDB (snake_case)
+    # Prepare dimensions for DynamoDB
     raw_dimensions = {key: Decimal(str(value)) for key, value in zip(r_keys, radar_chart_list)}
 
     dimensions_map = {
-        "Absorption or Task Engagement": "absorption_or_task_engagement",
+        "Absorption or Task Engagement": "absorptionOrTaskEngagement",
         "Enjoyment": "enjoyment",
-        "Equal Participation": "equal_participation",
-        "Shared Goal Commitment": "shared_goal_commitment",
-        "Trust and Psychological Safety": "trust_and_psychological_safety"
+        "Equal Participation": "equalParticipation",
+        "Shared Goal Commitment": "sharedGoalCommitment",
+        "Trust and Psychological Safety": "trustAndPsychologicalSafety"
     }
 
     # Map dimensions to snake_case and prepare for DynamoDB
