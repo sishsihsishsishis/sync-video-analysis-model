@@ -83,7 +83,7 @@ def change_fps(source_video_path, output_file_path, target_fps=25):
             shutil.copy(source_video_path, output_data_path)
             logging.info(f"Video copied to: {output_data_path}")
             cap.release()
-            return output_data_path
+            return (output_data_path, duration)
         
         frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -103,7 +103,7 @@ def change_fps(source_video_path, output_file_path, target_fps=25):
         out.release()
         logging.info(f"Video with changed FPS saved to: {output_file_path}")
 
-        return duration
+        return (output_data_path, duration)
     
     except Exception as e:
         logging.error(f"An error occurred: {e}")

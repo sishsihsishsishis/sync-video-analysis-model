@@ -88,7 +88,8 @@ if __name__ == '__main__':
                             # Change FPS
                             logging.info(f"Resampling video: {local_cached_filename}")
                             resample_path = f"./data/{local_cached_filename}.mp4"
-                            duration = helpers.change_fps(video_path, resample_path, 25)
+                            output_data_path, duration = helpers.change_fps(video_path, resample_path, 25)
+                            print(duration)
                             helpers.update_key(meeting_id, 'duration', Decimal(str(duration)))
                             
                         except Exception as e:
